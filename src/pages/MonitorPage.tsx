@@ -12,6 +12,7 @@ import type { Target, TargetType } from '../types/game';
 function generateTarget(id: string, type: TargetType, isBlackFlight: boolean): Target {
   const baseX = 20 + Math.random() * 60;
   const baseY = 20 + Math.random() * 60;
+  const direction = Math.random() * 360;
 
   const soundFreqByType: Record<TargetType, number> = {
     blackFlight: 3.5 + Math.random() * 2,
@@ -37,13 +38,31 @@ function generateTarget(id: string, type: TargetType, isBlackFlight: boolean): T
     unknown: 1 + Math.random() * 3,
   };
 
+  const riskPath: { x: number; y: number }[] = [];
+  if (type !== 'noise') {
+    const rad = (direction * Math.PI) / 180;
+    const speed = speedByType[type];
+    let px = baseX;
+    let py = baseY;
+    for (let i = 0; i < 10; i++) {
+      px += Math.cos(rad) * speed * 0.5;
+      py += Math.sin(rad) * speed * 0.5;
+      if (px >= 5 && px <= 95 && py >= 5 && py <= 95) {
+        riskPath.push({ x: px, y: py });
+      } else {
+        break;
+      }
+    }
+  }
+
   return {
     id,
     type: 'unknown',
+    trueType: type,
     x: baseX,
     y: baseY,
     speed: speedByType[type],
-    direction: Math.random() * 360,
+    direction,
     altitude: 100 + Math.random() * 400,
     signalStrength: signalByType[type],
     soundFrequency: soundFreqByType[type],
@@ -53,6 +72,7 @@ function generateTarget(id: string, type: TargetType, isBlackFlight: boolean): T
     isBlackFlight,
     detected: false,
     identified: false,
+    riskPath,
   };
 }
 

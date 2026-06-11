@@ -1,5 +1,5 @@
 import { useNavigate } from 'react-router-dom';
-import { Building2, Plane, Trophy, Factory, Home, Star, Lock, ChevronRight } from 'lucide-react';
+import { Building2, Plane, Trophy, Factory, Home, Star, Lock, ChevronRight, Moon, Cloud, Target, Zap } from 'lucide-react';
 import { useGameStore, usePlayerStore, MISSIONS } from '../store/useGameStore';
 import { GlowButton } from '../components/common/GlowButton';
 import type { Mission } from '../types/game';
@@ -17,18 +17,33 @@ const weatherNames: Record<string, string> = {
   cloudy: '多云',
   rainy: '雨天',
   night: '夜间',
+  rain: '暴雨',
+  fog: '浓雾',
+};
+
+const featureLockInfo: Record<string, { label: string; icon: React.ReactNode }> = {
+  'night-mode': { label: '需解锁「夜间模式」', icon: <Moon size={12} /> },
+  'bad-weather': { label: '需解锁「恶劣天气」', icon: <Cloud size={12} /> },
+  'multi-target-track': { label: '需解锁「多目标追踪」', icon: <Target size={12} /> },
 };
 
 export default function LobbyPage() {
   const navigate = useNavigate();
   const startMission = useGameStore((state) => state.startMission);
-  const { level, experience, totalScore, missionHistory } = usePlayerStore();
+  const { level, experience, totalScore, credits, unlockedFeatures, missionHistory } = usePlayerStore();
 
   const expToNextLevel = level * 500;
   const expProgress = (experience / expToNextLevel) * 100;
 
+  const isMissionAvailable = (mission: Mission): boolean => {
+    if (mission.requiredFeature) {
+      return unlockedFeatures.includes(mission.requiredFeature);
+    }
+    return mission.unlocked;
+  };
+
   const handleStartMission = (mission: Mission) => {
-    if (!mission.unlocked) return;
+    if (!isMissionAvailable(mission)) return;
     startMission(mission);
     navigate('/monitor');
   };
@@ -78,15 +93,21 @@ export default function LobbyPage() {
                   </div>
                 </div>
 
-                <div className="grid grid-cols-2 gap-4 pt-4 border-t border-slate-700/50">
-                  <div>
-                    <div className="text-2xl font-bold text-yellow-400">
+                <div className="grid grid-cols-3 gap-2 pt-4 border-t border-slate-700/50">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-yellow-400">
+                      {credits}
+                    </div>
+                    <div className="text-xs text-slate-500">可用积分</div>
+                  </div>
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-cyan-400">
                       {totalScore}
                     </div>
                     <div className="text-xs text-slate-500">总积分</div>
                   </div>
-                  <div>
-                    <div className="text-2xl font-bold text-green-400">
+                  <div className="text-center">
+                    <div className="text-xl font-bold text-green-400">
                       {missionHistory.length}
                     </div>
                     <div className="text-xs text-slate-500">完成任务</div>
@@ -127,93 +148,127 @@ export default function LobbyPage() {
             </h2>
 
             <div className="grid grid-cols-2 gap-4">
-              {MISSIONS.map((mission) => (
-                <div
-                  key={mission.id}
-                  className={`relative group ${
-                    mission.unlocked ? 'cursor-pointer' : 'cursor-not-allowed'
-                  }`}
-                  onClick={() => handleStartMission(mission)}
-                >
-                  <div
-                    className={`bg-slate-900/60 backdrop-blur-sm border rounded-sm p-5 transition-all duration-300 ${
-                      mission.unlocked
-                        ? 'border-cyan-500/30 hover:border-cyan-400 hover:shadow-[0_0_30px_rgba(0,212,255,0.2)] hover:-translate-y-1'
-                        : 'border-slate-700/50 opacity-60'
-                    }`}
-                  >
-                    <div className="absolute top-2 right-2">
-                      {mission.unlocked ? (
-                        <div className="flex">
-                          {Array.from({ length: 3 }).map((_, i) => (
-                            <Star
-                              key={i}
-                              size={14}
-                              className={
-                                i < mission.difficulty
-                                  ? 'text-yellow-400 fill-yellow-400'
-                                  : 'text-slate-600'
-                              }
-                            />
-                          ))}
-                        </div>
-                      ) : (
-                        <Lock size={16} className="text-slate-500" />
-                      )}
-                    </div>
+              {MISSIONS.map((mission) => {
+                const available = isMissionAvailable(mission);
+                const lockInfo = mission.requiredFeature ? featureLockInfo[mission.requiredFeature] : null;
 
+                return (
+                  <div
+                    key={mission.id}
+                    className={`relative group ${
+                      available ? 'cursor-pointer' : 'cursor-not-allowed'
+                    }`}
+                    onClick={() => handleStartMission(mission)}
+                  >
                     <div
-                      className={`w-14 h-14 rounded-sm flex items-center justify-center mb-3 ${
-                        mission.unlocked
-                          ? 'bg-cyan-500/10 text-cyan-400'
-                          : 'bg-slate-800 text-slate-600'
+                      className={`bg-slate-900/60 backdrop-blur-sm border rounded-sm p-5 transition-all duration-300 ${
+                        available
+                          ? mission.weather === 'night'
+                            ? 'border-indigo-500/40 hover:border-indigo-400 hover:shadow-[0_0_30px_rgba(99,102,241,0.25)] hover:-translate-y-1'
+                            : mission.weather === 'rain' || mission.weather === 'fog'
+                            ? 'border-blue-400/40 hover:border-blue-400 hover:shadow-[0_0_30px_rgba(59,130,246,0.25)] hover:-translate-y-1'
+                            : mission.requiredFeature === 'multi-target-track'
+                            ? 'border-purple-500/40 hover:border-purple-400 hover:shadow-[0_0_30px_rgba(168,85,247,0.25)] hover:-translate-y-1'
+                            : 'border-cyan-500/30 hover:border-cyan-400 hover:shadow-[0_0_30px_rgba(0,212,255,0.2)] hover:-translate-y-1'
+                          : 'border-slate-700/50 opacity-60'
                       }`}
                     >
-                      {missionIcons[mission.type]}
-                    </div>
+                      <div className="absolute top-2 right-2">
+                        {available ? (
+                          <div className="flex">
+                            {Array.from({ length: Math.min(mission.difficulty, 6) }).map((_, i) => (
+                              <Star
+                                key={i}
+                                size={14}
+                                className={
+                                  i < mission.difficulty
+                                    ? 'text-yellow-400 fill-yellow-400'
+                                    : 'text-slate-600'
+                                }
+                              />
+                            ))}
+                          </div>
+                        ) : (
+                          <Lock size={16} className="text-slate-500" />
+                        )}
+                      </div>
 
-                    <h3 className="text-lg font-bold text-white mb-1">
-                      {mission.name}
-                    </h3>
+                      <div
+                        className={`w-14 h-14 rounded-sm flex items-center justify-center mb-3 ${
+                          available
+                            ? mission.weather === 'night'
+                              ? 'bg-indigo-500/15 text-indigo-400'
+                              : mission.weather === 'rain' || mission.weather === 'fog'
+                              ? 'bg-blue-500/15 text-blue-400'
+                              : mission.requiredFeature === 'multi-target-track'
+                              ? 'bg-purple-500/15 text-purple-400'
+                              : 'bg-cyan-500/10 text-cyan-400'
+                            : 'bg-slate-800 text-slate-600'
+                        }`}
+                      >
+                        {missionIcons[mission.type]}
+                      </div>
 
-                    <p className="text-xs text-slate-400 mb-3 h-8">
-                      {mission.description}
-                    </p>
+                      <h3 className="text-lg font-bold text-white mb-1">
+                        {mission.name}
+                      </h3>
 
-                    <div className="flex items-center justify-between text-xs">
-                      <span className="text-slate-500">
-                        天气: {weatherNames[mission.weather]}
-                      </span>
-                      <span className="text-slate-500">
-                        目标: {mission.targetCount}个
-                      </span>
-                    </div>
+                      <p className="text-xs text-slate-400 mb-3 h-8">
+                        {mission.description}
+                      </p>
 
-                    <div className="mt-3 pt-3 border-t border-slate-700/50 flex items-center justify-between">
-                      <div className="flex items-center gap-1">
-                        <Star size={12} className="text-yellow-400 fill-yellow-400" />
-                        <span className="text-yellow-400 text-sm font-bold">
-                          +{mission.reward}
+                      <div className="flex items-center justify-between text-xs">
+                        <span className="text-slate-500">
+                          天气: {weatherNames[mission.weather] || mission.weather}
+                        </span>
+                        <span className="text-slate-500">
+                          目标: {mission.targetCount}个
                         </span>
                       </div>
 
-                      {mission.unlocked && (
-                        <span className="text-cyan-400 text-sm group-hover:translate-x-1 transition-transform">
-                          开始 →
-                        </span>
+                      {!available && lockInfo && (
+                        <div className="mt-3 flex items-center gap-1 text-xs text-orange-400">
+                          {lockInfo.icon}
+                          {lockInfo.label}
+                        </div>
                       )}
+
+                      <div className="mt-3 pt-3 border-t border-slate-700/50 flex items-center justify-between">
+                        <div className="flex items-center gap-1">
+                          <Star size={12} className="text-yellow-400 fill-yellow-400" />
+                          <span className="text-yellow-400 text-sm font-bold">
+                            +{mission.reward}
+                          </span>
+                        </div>
+
+                        {available && (
+                          <span className="text-cyan-400 text-sm group-hover:translate-x-1 transition-transform">
+                            开始 →
+                          </span>
+                        )}
+                      </div>
+                    </div>
+
+                    <div
+                      className={`absolute inset-0 -z-10 opacity-0 group-hover:opacity-100 transition-opacity ${
+                        available ? 'block' : 'hidden'
+                      }`}
+                    >
+                      <div
+                        className={`absolute inset-0 blur-xl ${
+                          mission.weather === 'night'
+                            ? 'bg-indigo-400/5'
+                            : mission.weather === 'rain' || mission.weather === 'fog'
+                            ? 'bg-blue-400/5'
+                            : mission.requiredFeature === 'multi-target-track'
+                            ? 'bg-purple-400/5'
+                            : 'bg-cyan-400/5'
+                        }`}
+                      />
                     </div>
                   </div>
-
-                  <div
-                    className={`absolute inset-0 -z-10 opacity-0 group-hover:opacity-100 transition-opacity ${
-                      mission.unlocked ? 'block' : 'hidden'
-                    }`}
-                  >
-                    <div className="absolute inset-0 bg-cyan-400/5 blur-xl" />
-                  </div>
-                </div>
-              ))}
+                );
+              })}
             </div>
           </div>
         </div>

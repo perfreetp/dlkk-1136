@@ -1,4 +1,4 @@
-import { useState, useRef, useEffect } from 'react';
+import { useState, useRef, useEffect, useCallback } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -10,12 +10,23 @@ import {
   AlertTriangle,
   Check,
   Navigation,
+  Route,
 } from 'lucide-react';
 import { useGameStore } from '../store/useGameStore';
 import { HudPanel } from '../components/common/HudPanel';
 import { GlowButton } from '../components/common/GlowButton';
 import { StatusBadge } from '../components/common/StatusBadge';
-import type { Fence, FenceLevel, Patrol } from '../types/game';
+import type { Fence, FenceLevel, Patrol, Target } from '../types/game';
+
+type EditMode = 'none' | 'draw-fence' | 'draw-path' | 'select';
+
+interface DragState {
+  type: 'vertex' | 'fence';
+  fenceId: string;
+  vertexIndex?: number;
+  offsetX: number;
+  offsetY: number;
+}
 
 export default function MapPage() {
   const navigate = useNavigate();
@@ -25,18 +36,24 @@ export default function MapPage() {
     fences,
     addFence,
     removeFence,
+    updateFenceVertex,
+    moveFence,
     patrols,
     addPatrol,
     currentMission,
     selectedTarget,
     selectTarget,
+    setTargetRiskPath,
   } = useGameStore();
 
-  const [drawMode, setDrawMode] = useState(false);
+  const [editMode, setEditMode] = useState<EditMode>('select');
   const [drawingVertices, setDrawingVertices] = useState<{ x: number; y: number }[]>([]);
   const [fenceName, setFenceName] = useState('');
   const [fenceLevel, setFenceLevel] = useState<FenceLevel>('medium');
   const [selectedFence, setSelectedFence] = useState<string | null>(null);
+  const [dragState, setDragState] = useState<DragState | null>(null);
+  const [mousePos, setMousePos] = useState<{ x: number; y: number } | null>(null);
+  const [pathDrawing, setPathDrawing] = useState<{ targetId: string; points: { x: number; y: number }[] } | null>(null);
 
   const buildings = [
     { x: 20, y: 30, w: 15, h: 20, name: '商业中心' },
@@ -55,6 +72,144 @@ export default function MapPage() {
     [{ x: 0, y: 25 }, { x: 100, y: 25 }],
     [{ x: 0, y: 75 }, { x: 100, y: 75 }],
   ];
+
+  const getCanvasCoords = useCallback((e: React.MouseEvent<HTMLCanvasElement> | MouseEvent) => {
+    const canvas = canvasRef.current;
+    if (!canvas) return { x: 0, y: 0 };
+    const rect = canvas.getBoundingClientRect();
+    const x = ((e.clientX - rect.left) / rect.width) * 100;
+    const y = ((e.clientY - rect.top) / rect.height) * 100;
+    return { x, y };
+  }, []);
+
+  const pointInPolygon = (x: number, y: number, vertices: { x: number; y: number }[]) => {
+    let inside = false;
+    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
+      const xi = vertices[i].x, yi = vertices[i].y;
+      const xj = vertices[j].x, yj = vertices[j].y;
+      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
+        inside = !inside;
+      }
+    }
+    return inside;
+  };
+
+  const findNearestVertex = useCallback((x: number, y: number): { fenceId: string; vertexIndex: number } | null => {
+    const threshold = 3;
+    let nearest: { fenceId: string; vertexIndex: number; dist: number } | null = null;
+    for (const fence of fences) {
+      for (let i = 0; i < fence.vertices.length; i++) {
+        const v = fence.vertices[i];
+        const dist = Math.sqrt((v.x - x) ** 2 + (v.y - y) ** 2);
+        if (dist < threshold && (!nearest || dist < nearest.dist)) {
+          nearest = { fenceId: fence.id, vertexIndex: i, dist };
+        }
+      }
+    }
+    return nearest ? { fenceId: nearest.fenceId, vertexIndex: nearest.vertexIndex } : null;
+  }, [fences]);
+
+  const findFenceAtPoint = useCallback((x: number, y: number): Fence | null => {
+    for (let i = fences.length - 1; i >= 0; i--) {
+      const f = fences[i];
+      if (f.vertices.length >= 3 && pointInPolygon(x, y, f.vertices)) {
+        return f;
+      }
+    }
+    return null;
+  }, [fences]);
+
+  const findTargetAtPoint = useCallback((x: number, y: number): Target | null => {
+    for (const t of detectedTargets) {
+      if (!t.detected) continue;
+      const dist = Math.sqrt((t.x - x) ** 2 + (t.y - y) ** 2);
+      if (dist < 5) return t;
+    }
+    return null;
+  }, [detectedTargets]);
+
+  const handleMouseDown = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { x, y } = getCanvasCoords(e);
+
+    if (editMode === 'draw-fence') {
+      setDrawingVertices([...drawingVertices, { x, y }]);
+      return;
+    }
+
+    if (editMode === 'draw-path' && selectedTarget) {
+      if (!pathDrawing) {
+        setPathDrawing({ targetId: selectedTarget.id, points: [{ x: selectedTarget.x, y: selectedTarget.y }, { x, y }] });
+      } else {
+        setPathDrawing({ ...pathDrawing, points: [...pathDrawing.points, { x, y }] });
+      }
+      return;
+    }
+
+    const nearVertex = findNearestVertex(x, y);
+    if (nearVertex) {
+      setSelectedFence(nearVertex.fenceId);
+      const fence = fences.find((f) => f.id === nearVertex.fenceId);
+      if (fence) {
+        const v = fence.vertices[nearVertex.vertexIndex];
+        setDragState({
+          type: 'vertex',
+          fenceId: nearVertex.fenceId,
+          vertexIndex: nearVertex.vertexIndex,
+          offsetX: x - v.x,
+          offsetY: y - v.y,
+        });
+      }
+      return;
+    }
+
+    const fenceAtPoint = findFenceAtPoint(x, y);
+    if (fenceAtPoint) {
+      setSelectedFence(fenceAtPoint.id);
+      const centroid = fenceAtPoint.vertices.reduce(
+        (acc, v) => ({ x: acc.x + v.x / fenceAtPoint.vertices.length, y: acc.y + v.y / fenceAtPoint.vertices.length }),
+        { x: 0, y: 0 }
+      );
+      setDragState({
+        type: 'fence',
+        fenceId: fenceAtPoint.id,
+        offsetX: x - centroid.x,
+        offsetY: y - centroid.y,
+      });
+      return;
+    }
+
+    const clickedTarget = findTargetAtPoint(x, y);
+    if (clickedTarget) {
+      selectTarget(clickedTarget);
+    } else {
+      setSelectedFence(null);
+      selectTarget(null as unknown as Target);
+    }
+  };
+
+  const handleMouseMove = (e: React.MouseEvent<HTMLCanvasElement>) => {
+    const { x, y } = getCanvasCoords(e);
+    setMousePos({ x, y });
+
+    if (dragState && dragState.type === 'vertex' && dragState.vertexIndex !== undefined) {
+      updateFenceVertex(dragState.fenceId, dragState.vertexIndex, x - dragState.offsetX, y - dragState.offsetY);
+    } else if (dragState && dragState.type === 'fence') {
+      const fence = fences.find((f) => f.id === dragState.fenceId);
+      if (fence) {
+        const centroid = fence.vertices.reduce(
+          (acc, v) => ({ x: acc.x + v.x / fence.vertices.length, y: acc.y + v.y / fence.vertices.length }),
+          { x: 0, y: 0 }
+        );
+        const deltaX = (x - dragState.offsetX) - centroid.x;
+        const deltaY = (y - dragState.offsetY) - centroid.y;
+        moveFence(dragState.fenceId, deltaX, deltaY);
+      }
+    }
+  };
+
+  const handleMouseUp = () => {
+    setDragState(null);
+  };
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -133,6 +288,65 @@ export default function MapPage() {
         ctx.fillText(building.name, bx + 4, by - 4);
       });
 
+      detectedTargets.forEach((target) => {
+        const path = target.riskPath;
+        if (path && path.length >= 2 && (target.trueType === 'blackFlight' || target.type === 'blackFlight')) {
+          ctx.beginPath();
+          path.forEach((p, i) => {
+            const px = (p.x / 100) * width;
+            const py = (p.y / 100) * height;
+            if (i === 0) ctx.moveTo(px, py);
+            else ctx.lineTo(px, py);
+          });
+          ctx.strokeStyle = 'rgba(255, 71, 87, 0.5)';
+          ctx.lineWidth = 2;
+          ctx.setLineDash([8, 4]);
+          ctx.stroke();
+          ctx.setLineDash([]);
+
+          const arrowP = path[path.length - 1];
+          const prevP = path[path.length - 2];
+          if (arrowP && prevP) {
+            const angle = Math.atan2(arrowP.y - prevP.y, arrowP.x - prevP.x);
+            const ax = (arrowP.x / 100) * width;
+            const ay = (arrowP.y / 100) * height;
+            const arrowLen = 10;
+            ctx.beginPath();
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax - arrowLen * Math.cos(angle - Math.PI / 6), ay - arrowLen * Math.sin(angle - Math.PI / 6));
+            ctx.moveTo(ax, ay);
+            ctx.lineTo(ax - arrowLen * Math.cos(angle + Math.PI / 6), ay - arrowLen * Math.sin(angle + Math.PI / 6));
+            ctx.strokeStyle = '#ff4757';
+            ctx.lineWidth = 2;
+            ctx.stroke();
+          }
+        }
+      });
+
+      if (pathDrawing && pathDrawing.points.length >= 2) {
+        ctx.beginPath();
+        pathDrawing.points.forEach((p, i) => {
+          const px = (p.x / 100) * width;
+          const py = (p.y / 100) * height;
+          if (i === 0) ctx.moveTo(px, py);
+          else ctx.lineTo(px, py);
+        });
+        ctx.strokeStyle = '#ffa502';
+        ctx.lineWidth = 3;
+        ctx.setLineDash([6, 3]);
+        ctx.stroke();
+        ctx.setLineDash([]);
+
+        pathDrawing.points.forEach((p) => {
+          const px = (p.x / 100) * width;
+          const py = (p.y / 100) * height;
+          ctx.beginPath();
+          ctx.arc(px, py, 4, 0, Math.PI * 2);
+          ctx.fillStyle = '#ffa502';
+          ctx.fill();
+        });
+      }
+
       fences.forEach((fence) => {
         if (fence.vertices.length < 2) return;
 
@@ -154,17 +368,38 @@ export default function MapPage() {
         ctx.stroke();
         ctx.setLineDash([]);
 
-        fence.vertices.forEach((v) => {
-          const vx = (v.x / 100) * width;
-          const vy = (v.y / 100) * height;
-          ctx.beginPath();
-          ctx.arc(vx, vy, 5, 0, Math.PI * 2);
-          ctx.fillStyle = fence.color;
-          ctx.fill();
-        });
+        if (selectedFence === fence.id) {
+          fence.vertices.forEach((v, idx) => {
+            const vx = (v.x / 100) * width;
+            const vy = (v.y / 100) * height;
+            ctx.beginPath();
+            ctx.arc(vx, vy, 7, 0, Math.PI * 2);
+            ctx.fillStyle = '#fff';
+            ctx.fill();
+            ctx.beginPath();
+            ctx.arc(vx, vy, 5, 0, Math.PI * 2);
+            ctx.fillStyle = fence.color;
+            ctx.fill();
+
+            ctx.fillStyle = '#fff';
+            ctx.font = 'bold 8px monospace';
+            ctx.textAlign = 'center';
+            ctx.fillText(String(idx + 1), vx, vy + 3);
+            ctx.textAlign = 'start';
+          });
+        } else {
+          fence.vertices.forEach((v) => {
+            const vx = (v.x / 100) * width;
+            const vy = (v.y / 100) * height;
+            ctx.beginPath();
+            ctx.arc(vx, vy, 4, 0, Math.PI * 2);
+            ctx.fillStyle = fence.color;
+            ctx.fill();
+          });
+        }
       });
 
-      if (drawMode && drawingVertices.length > 0) {
+      if (editMode === 'draw-fence' && drawingVertices.length > 0) {
         ctx.beginPath();
         drawingVertices.forEach((v, i) => {
           const vx = (v.x / 100) * width;
@@ -172,19 +407,34 @@ export default function MapPage() {
           if (i === 0) ctx.moveTo(vx, vy);
           else ctx.lineTo(vx, vy);
         });
+        if (mousePos) {
+          const mx = (mousePos.x / 100) * width;
+          const my = (mousePos.y / 100) * height;
+          ctx.lineTo(mx, my);
+        }
         ctx.strokeStyle = '#ffc107';
         ctx.lineWidth = 2;
         ctx.setLineDash([4, 4]);
         ctx.stroke();
         ctx.setLineDash([]);
 
-        drawingVertices.forEach((v) => {
+        drawingVertices.forEach((v, idx) => {
           const vx = (v.x / 100) * width;
           const vy = (v.y / 100) * height;
           ctx.beginPath();
-          ctx.arc(vx, vy, 5, 0, Math.PI * 2);
+          ctx.arc(vx, vy, 6, 0, Math.PI * 2);
+          ctx.fillStyle = '#fff';
+          ctx.fill();
+          ctx.beginPath();
+          ctx.arc(vx, vy, 4, 0, Math.PI * 2);
           ctx.fillStyle = '#ffc107';
           ctx.fill();
+
+          ctx.fillStyle = '#fff';
+          ctx.font = 'bold 8px monospace';
+          ctx.textAlign = 'center';
+          ctx.fillText(String(idx + 1), vx, vy + 3);
+          ctx.textAlign = 'start';
         });
       }
 
@@ -212,15 +462,17 @@ export default function MapPage() {
         const tx = (target.x / 100) * width;
         const ty = (target.y / 100) * height;
 
-        const color = target.isBlackFlight
+        const color = target.type === 'blackFlight'
           ? '#ff4757'
           : target.type === 'bird'
           ? '#2ed573'
           : target.type === 'legitimate'
           ? '#00d4ff'
-          : '#a55eea';
+          : target.type === 'noise'
+          ? '#a55eea'
+          : '#94a3b8';
 
-        if (target.type === 'blackFlight' || (target.type === 'unknown' && target.isBlackFlight)) {
+        if (target.type === 'blackFlight' || (target.type === 'unknown' && target.trueType === 'blackFlight')) {
           const pulseSize = 20 + Math.sin(Date.now() / 200) * 5;
           ctx.beginPath();
           ctx.arc(tx, ty, pulseSize, 0, Math.PI * 2);
@@ -249,6 +501,16 @@ export default function MapPage() {
         }
       });
 
+      if (mousePos && editMode === 'draw-fence') {
+        const mx = (mousePos.x / 100) * width;
+        const my = (mousePos.y / 100) * height;
+        ctx.beginPath();
+        ctx.arc(mx, my, 6, 0, Math.PI * 2);
+        ctx.strokeStyle = '#ffc107';
+        ctx.lineWidth = 2;
+        ctx.stroke();
+      }
+
       requestAnimationFrame(drawMap);
     };
 
@@ -257,44 +519,7 @@ export default function MapPage() {
     return () => {
       window.removeEventListener('resize', resizeCanvas);
     };
-  }, [detectedTargets, fences, patrols, drawMode, drawingVertices, selectedFence, selectedTarget]);
-
-  const handleCanvasClick = (e: React.MouseEvent<HTMLCanvasElement>) => {
-    const rect = e.currentTarget.getBoundingClientRect();
-    const x = ((e.clientX - rect.left) / rect.width) * 100;
-    const y = ((e.clientY - rect.top) / rect.height) * 100;
-
-    if (drawMode) {
-      setDrawingVertices([...drawingVertices, { x, y }]);
-    } else {
-      const clickedTarget = detectedTargets.find((t) => {
-        const dx = t.x - x;
-        const dy = t.y - y;
-        return Math.sqrt(dx * dx + dy * dy) < 5 && t.detected;
-      });
-      if (clickedTarget) {
-        selectTarget(clickedTarget);
-      } else {
-        const clickedFence = fences.find((f) => {
-          if (f.vertices.length < 3) return false;
-          return pointInPolygon(x, y, f.vertices);
-        });
-        setSelectedFence(clickedFence?.id || null);
-      }
-    }
-  };
-
-  const pointInPolygon = (x: number, y: number, vertices: { x: number; y: number }[]) => {
-    let inside = false;
-    for (let i = 0, j = vertices.length - 1; i < vertices.length; j = i++) {
-      const xi = vertices[i].x, yi = vertices[i].y;
-      const xj = vertices[j].x, yj = vertices[j].y;
-      if (((yi > y) !== (yj > y)) && (x < (xj - xi) * (y - yi) / (yj - yi) + xi)) {
-        inside = !inside;
-      }
-    }
-    return inside;
-  };
+  }, [detectedTargets, fences, patrols, editMode, drawingVertices, selectedFence, selectedTarget, mousePos, pathDrawing]);
 
   const handleFinishFence = () => {
     if (drawingVertices.length < 3) return;
@@ -314,15 +539,28 @@ export default function MapPage() {
     };
 
     addFence(newFence);
-    setDrawMode(false);
+    setEditMode('select');
     setDrawingVertices([]);
     setFenceName('');
   };
 
   const handleCancelFence = () => {
-    setDrawMode(false);
+    setEditMode('select');
     setDrawingVertices([]);
     setFenceName('');
+  };
+
+  const handleFinishPath = () => {
+    if (pathDrawing && pathDrawing.points.length >= 2 && selectedTarget) {
+      setTargetRiskPath(selectedTarget.id, pathDrawing.points);
+    }
+    setPathDrawing(null);
+    setEditMode('select');
+  };
+
+  const handleCancelPath = () => {
+    setPathDrawing(null);
+    setEditMode('select');
   };
 
   const handleAddPatrol = () => {
@@ -345,7 +583,7 @@ export default function MapPage() {
   }
 
   const blackFlightTargets = detectedTargets.filter(
-    (t) => t.type === 'blackFlight' || (t.identified && t.isBlackFlight)
+    (t) => t.type === 'blackFlight' || (t.identified && t.trueType === 'blackFlight')
   );
 
   return (
@@ -364,7 +602,7 @@ export default function MapPage() {
             <div>
               <h1 className="text-xl font-bold text-cyan-300">地图部署</h1>
               <p className="text-sm text-slate-400">
-                布设电子围栏，派遣巡查队
+                布设电子围栏，标记风险路径
               </p>
             </div>
           </div>
@@ -396,8 +634,12 @@ export default function MapPage() {
               <div className="relative h-[calc(100%-40px)]">
                 <canvas
                   ref={canvasRef}
-                  className="w-full h-full cursor-crosshair"
-                  onClick={handleCanvasClick}
+                  className="w-full h-full"
+                  style={{ cursor: dragState ? 'grabbing' : editMode === 'draw-fence' || editMode === 'draw-path' ? 'crosshair' : 'grab' }}
+                  onMouseDown={handleMouseDown}
+                  onMouseMove={handleMouseMove}
+                  onMouseUp={handleMouseUp}
+                  onMouseLeave={handleMouseUp}
                 />
 
                 <div className="absolute top-3 left-3 text-xs space-y-1">
@@ -415,138 +657,214 @@ export default function MapPage() {
                   </div>
                   <div className="flex items-center gap-2">
                     <span className="w-3 h-3 rounded-full bg-purple-500" />
-                    <span className="text-purple-400">未知/噪声</span>
+                    <span className="text-purple-400">设备噪声</span>
+                  </div>
+                  <div className="flex items-center gap-2 pt-1 border-t border-slate-700/50">
+                    <span className="flex-1 h-0.5 bg-red-500" style={{ borderStyle: 'dashed' }} />
+                    <span className="text-red-400">风险路径</span>
                   </div>
                 </div>
 
-                {drawMode && (
+                {editMode === 'draw-fence' && (
                   <div className="absolute top-3 right-3 px-3 py-2 bg-yellow-500/20 border border-yellow-400 text-yellow-300 text-xs">
-                    绘制模式 - 点击添加顶点
+                    围栏绘制 - 点击添加顶点
                     <br />
                     已添加 {drawingVertices.length} 个顶点
+                  </div>
+                )}
+                {editMode === 'draw-path' && (
+                  <div className="absolute top-3 right-3 px-3 py-2 bg-orange-500/20 border border-orange-400 text-orange-300 text-xs">
+                    路径标记 - 点击添加路径点
+                    <br />
+                    已添加 {pathDrawing?.points.length || 0} 个点
+                  </div>
+                )}
+                {editMode === 'select' && (
+                  <div className="absolute top-3 right-3 px-3 py-2 bg-cyan-500/20 border border-cyan-400 text-cyan-300 text-xs">
+                    选择模式 - 拖拽顶点或围栏调整范围
                   </div>
                 )}
               </div>
             </HudPanel>
           </div>
 
-          <div className="col-span-3 space-y-4">
-            <HudPanel title="电子围栏">
-              <div className="space-y-3">
-                {!drawMode ? (
-                  <GlowButton
-                    variant="warning"
-                    className="w-full flex items-center justify-center gap-2"
-                    onClick={() => setDrawMode(true)}
-                  >
-                    <Plus size={16} />
-                    新建围栏
-                  </GlowButton>
-                ) : (
-                  <div className="space-y-3">
-                    <input
-                      type="text"
-                      placeholder="围栏名称"
-                      value={fenceName}
-                      onChange={(e) => setFenceName(e.target.value)}
-                      className="w-full px-3 py-2 bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 focus:border-cyan-400 outline-none"
-                    />
-                    <div>
-                      <label className="text-xs text-slate-400 block mb-1">警戒级别</label>
-                      <div className="flex gap-2">
-                        {(['low', 'medium', 'high'] as FenceLevel[]).map((level) => (
-                          <button
-                            key={level}
-                            onClick={() => setFenceLevel(level)}
-                            className={`flex-1 py-1 text-xs border ${
-                              fenceLevel === level
-                                ? level === 'low'
-                                  ? 'bg-green-500/20 border-green-400 text-green-300'
-                                  : level === 'medium'
-                                  ? 'bg-yellow-500/20 border-yellow-400 text-yellow-300'
-                                  : 'bg-red-500/20 border-red-400 text-red-300'
-                                : 'border-slate-600 text-slate-500'
-                            }`}
-                          >
-                            {level === 'low' ? '低' : level === 'medium' ? '中' : '高'}
-                          </button>
-                        ))}
-                      </div>
-                    </div>
-                    <div className="flex gap-2">
-                      <GlowButton
-                        variant="success"
-                        className="flex-1 text-xs"
-                        onClick={handleFinishFence}
-                        disabled={drawingVertices.length < 3}
-                      >
-                        <Check size={14} className="inline mr-1" />
-                        完成
-                      </GlowButton>
-                      <GlowButton
-                        variant="danger"
-                        className="flex-1 text-xs"
-                        onClick={handleCancelFence}
-                      >
-                        <Trash2 size={14} className="inline mr-1" />
-                        取消
-                      </GlowButton>
-                    </div>
-                  </div>
-                )}
-
-                <div className="space-y-2 pt-3 border-t border-slate-700/50">
-                  <div className="text-xs text-slate-400">已有围栏</div>
-                  {fences.length === 0 ? (
-                    <div className="text-xs text-slate-600 text-center py-4">
-                      暂无围栏
-                    </div>
-                  ) : (
-                    fences.map((fence) => (
-                      <div
-                        key={fence.id}
-                        className={`p-2 text-xs border cursor-pointer transition-colors ${
-                          selectedFence === fence.id
-                            ? 'border-cyan-400 bg-cyan-500/10'
-                            : 'border-slate-700/50 hover:border-slate-600'
-                        }`}
-                        onClick={() => setSelectedFence(fence.id)}
-                      >
-                        <div className="flex items-center justify-between">
-                          <div className="flex items-center gap-2">
-                            <Shield size={12} style={{ color: fence.color }} />
-                            <span className="text-white">{fence.name}</span>
-                          </div>
-                          <span
-                            className="text-xs"
-                            style={{ color: fence.color }}
-                          >
-                            {fence.level === 'low'
-                              ? '低级'
-                              : fence.level === 'medium'
-                              ? '中级'
-                              : '高级'}
-                          </span>
-                        </div>
-                      </div>
-                    ))
-                  )}
-                </div>
-
-                {selectedFence && (
-                  <button
-                    onClick={() => {
-                      removeFence(selectedFence);
-                      setSelectedFence(null);
-                    }}
-                    className="w-full py-2 text-xs text-red-400 border border-red-500/30 hover:bg-red-500/10 flex items-center justify-center gap-1"
-                  >
-                    <Trash2 size={12} />
-                    删除选中围栏
-                  </button>
-                )}
+          <div className="col-span-3 space-y-4 overflow-y-auto">
+            <HudPanel title="工具">
+              <div className="grid grid-cols-2 gap-2">
+                <button
+                  onClick={() => { setEditMode(editMode === 'draw-fence' ? 'select' : 'draw-fence'); setPathDrawing(null); }}
+                  className={`flex items-center justify-center gap-1 py-2 text-xs border transition-colors ${
+                    editMode === 'draw-fence'
+                      ? 'bg-yellow-500/20 border-yellow-400 text-yellow-300'
+                      : 'border-slate-600 text-slate-400 hover:border-cyan-400 hover:text-cyan-300'
+                  }`}
+                >
+                  <Shield size={14} />
+                  绘制围栏
+                </button>
+                <button
+                  onClick={() => {
+                    if (!selectedTarget) return;
+                    setEditMode(editMode === 'draw-path' ? 'select' : 'draw-path');
+                    setDrawingVertices([]);
+                  }}
+                  disabled={!selectedTarget}
+                  className={`flex items-center justify-center gap-1 py-2 text-xs border transition-colors ${
+                    editMode === 'draw-path'
+                      ? 'bg-orange-500/20 border-orange-400 text-orange-300'
+                      : !selectedTarget
+                      ? 'border-slate-700 text-slate-600 cursor-not-allowed'
+                      : 'border-slate-600 text-slate-400 hover:border-cyan-400 hover:text-cyan-300'
+                  }`}
+                >
+                  <Route size={14} />
+                  标记路径
+                </button>
               </div>
             </HudPanel>
+
+            {editMode === 'draw-fence' ? (
+              <HudPanel title="新建围栏">
+                <div className="space-y-3">
+                  <input
+                    type="text"
+                    placeholder="围栏名称"
+                    value={fenceName}
+                    onChange={(e) => setFenceName(e.target.value)}
+                    className="w-full px-3 py-2 bg-slate-800 border border-slate-600 text-sm text-white placeholder-slate-500 focus:border-cyan-400 outline-none"
+                  />
+                  <div>
+                    <label className="text-xs text-slate-400 block mb-1">警戒级别</label>
+                    <div className="flex gap-2">
+                      {(['low', 'medium', 'high'] as FenceLevel[]).map((level) => (
+                        <button
+                          key={level}
+                          onClick={() => setFenceLevel(level)}
+                          className={`flex-1 py-1 text-xs border ${
+                            fenceLevel === level
+                              ? level === 'low'
+                                ? 'bg-green-500/20 border-green-400 text-green-300'
+                                : level === 'medium'
+                                ? 'bg-yellow-500/20 border-yellow-400 text-yellow-300'
+                                : 'bg-red-500/20 border-red-400 text-red-300'
+                              : 'border-slate-600 text-slate-500'
+                          }`}
+                        >
+                          {level === 'low' ? '低' : level === 'medium' ? '中' : '高'}
+                        </button>
+                      ))}
+                    </div>
+                  </div>
+                  <div className="flex gap-2">
+                    <GlowButton
+                      variant="success"
+                      className="flex-1 text-xs"
+                      onClick={handleFinishFence}
+                      disabled={drawingVertices.length < 3}
+                    >
+                      <Check size={14} className="inline mr-1" />
+                      完成
+                    </GlowButton>
+                    <GlowButton
+                      variant="danger"
+                      className="flex-1 text-xs"
+                      onClick={handleCancelFence}
+                    >
+                      <Trash2 size={14} className="inline mr-1" />
+                      取消
+                    </GlowButton>
+                  </div>
+                </div>
+              </HudPanel>
+            ) : editMode === 'draw-path' ? (
+              <HudPanel title="标记风险路径">
+                <div className="space-y-3">
+                  <p className="text-xs text-slate-400">
+                    在地图上依次点击添加路径点，标记黑飞目标的预计飞行路线。
+                  </p>
+                  <div className="text-xs text-slate-300">
+                    已添加路径点: <span className="text-orange-300">{pathDrawing?.points.length || 0}</span>
+                  </div>
+                  <div className="flex gap-2">
+                    <GlowButton
+                      variant="success"
+                      className="flex-1 text-xs"
+                      onClick={handleFinishPath}
+                      disabled={!pathDrawing || pathDrawing.points.length < 2}
+                    >
+                      <Check size={14} className="inline mr-1" />
+                      完成
+                    </GlowButton>
+                    <GlowButton
+                      variant="danger"
+                      className="flex-1 text-xs"
+                      onClick={handleCancelPath}
+                    >
+                      <Trash2 size={14} className="inline mr-1" />
+                      取消
+                    </GlowButton>
+                  </div>
+                </div>
+              </HudPanel>
+            ) : (
+              <HudPanel title="电子围栏">
+                <div className="space-y-3">
+                  <div className="space-y-2 pt-3 border-t border-slate-700/50">
+                    <div className="text-xs text-slate-400">已有围栏（选中后可拖拽调整）</div>
+                    {fences.length === 0 ? (
+                      <div className="text-xs text-slate-600 text-center py-4">
+                        暂无围栏，点击上方「绘制围栏」开始
+                      </div>
+                    ) : (
+                      fences.map((fence) => (
+                        <div
+                          key={fence.id}
+                          className={`p-2 text-xs border cursor-pointer transition-colors ${
+                            selectedFence === fence.id
+                              ? 'border-cyan-400 bg-cyan-500/10'
+                              : 'border-slate-700/50 hover:border-slate-600'
+                          }`}
+                          onClick={() => setSelectedFence(fence.id)}
+                        >
+                          <div className="flex items-center justify-between">
+                            <div className="flex items-center gap-2">
+                              <Shield size={12} style={{ color: fence.color }} />
+                              <span className="text-white">{fence.name}</span>
+                            </div>
+                            <span
+                              className="text-xs"
+                              style={{ color: fence.color }}
+                            >
+                              {fence.level === 'low'
+                                ? '低级'
+                                : fence.level === 'medium'
+                                ? '中级'
+                                : '高级'}
+                            </span>
+                          </div>
+                          <div className="text-slate-500 mt-1">
+                            {fence.vertices.length} 个顶点 · 拖拽可调整
+                          </div>
+                        </div>
+                      ))
+                    )}
+                  </div>
+
+                  {selectedFence && (
+                    <button
+                      onClick={() => {
+                        removeFence(selectedFence);
+                        setSelectedFence(null);
+                      }}
+                      className="w-full py-2 text-xs text-red-400 border border-red-500/30 hover:bg-red-500/10 flex items-center justify-center gap-1"
+                    >
+                      <Trash2 size={12} />
+                      删除选中围栏
+                    </button>
+                  )}
+                </div>
+              </HudPanel>
+            )}
 
             <HudPanel title="巡查队">
               <div className="space-y-3">
@@ -608,15 +926,29 @@ export default function MapPage() {
               <HudPanel title="选中目标">
                 <div className="space-y-2 text-sm">
                   <div className="flex justify-between">
-                    <span className="text-slate-400">类型:</span>
+                    <span className="text-slate-400">识别类型:</span>
                     <span
                       className={
-                        selectedTarget.isBlackFlight
+                        selectedTarget.type === 'blackFlight'
                           ? 'text-red-400 font-bold'
-                          : 'text-green-400'
+                          : selectedTarget.type === 'bird'
+                          ? 'text-green-400'
+                          : selectedTarget.type === 'legitimate'
+                          ? 'text-cyan-400'
+                          : selectedTarget.type === 'noise'
+                          ? 'text-purple-400'
+                          : 'text-slate-400'
                       }
                     >
-                      {selectedTarget.isBlackFlight ? '黑飞无人机' : '正常目标'}
+                      {selectedTarget.type === 'blackFlight'
+                        ? '黑飞无人机'
+                        : selectedTarget.type === 'bird'
+                        ? '鸟群'
+                        : selectedTarget.type === 'legitimate'
+                        ? '合法航班'
+                        : selectedTarget.type === 'noise'
+                        ? '设备噪声'
+                        : '未识别'}
                     </span>
                   </div>
                   <div className="flex justify-between">
@@ -637,6 +969,14 @@ export default function MapPage() {
                       {selectedTarget.speed.toFixed(1)} m/s
                     </span>
                   </div>
+                  {selectedTarget.riskPath && (
+                    <div className="flex justify-between">
+                      <span className="text-slate-400">风险路径:</span>
+                      <span className="text-orange-400">
+                        已标记 {selectedTarget.riskPath.length} 个点
+                      </span>
+                    </div>
+                  )}
                 </div>
               </HudPanel>
             )}

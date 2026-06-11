@@ -28,9 +28,7 @@ export default function IdentifyPage() {
     const target = detectedTargets.find((t) => t.id === targetId);
     if (!target) return;
 
-    const isCorrect =
-      (type === 'blackFlight' && target.isBlackFlight) ||
-      (type !== 'blackFlight' && !target.isBlackFlight);
+    const isCorrect = target.trueType === type;
 
     identifyTarget(targetId, type);
     setFeedback({ targetId, correct: isCorrect });

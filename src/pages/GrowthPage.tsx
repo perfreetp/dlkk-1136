@@ -13,6 +13,7 @@ import {
   Target,
   Check,
   ChevronRight,
+  AlertCircle,
 } from 'lucide-react';
 import { usePlayerStore } from '../store/useGameStore';
 import { SENSORS, ACHIEVEMENTS } from '../data/gameData';
@@ -28,6 +29,7 @@ export default function GrowthPage() {
     level,
     experience,
     totalScore,
+    credits,
     unlockedSensors,
     unlockedFeatures,
     achievements,
@@ -38,6 +40,7 @@ export default function GrowthPage() {
   } = usePlayerStore();
 
   const [activeTab, setActiveTab] = useState<TabType>('sensors');
+  const [errorMsg, setErrorMsg] = useState<string | null>(null);
 
   const expToNextLevel = level * 500;
   const expProgress = (experience / expToNextLevel) * 100;
@@ -55,7 +58,7 @@ export default function GrowthPage() {
     {
       id: 'night-mode',
       name: '夜间模式',
-      description: '解锁夜间任务场景',
+      description: '解锁夜间任务场景，任务在低光照环境下进行',
       cost: 300,
       icon: <Moon size={24} />,
       unlocked: unlockedFeatures.includes('night-mode'),
@@ -63,7 +66,7 @@ export default function GrowthPage() {
     {
       id: 'bad-weather',
       name: '恶劣天气',
-      description: '解锁雨天、雾天等复杂天气任务',
+      description: '解锁雨天、雾天等复杂天气任务，信号与雷达衰减',
       cost: 400,
       icon: <Cloud size={24} />,
       unlocked: unlockedFeatures.includes('bad-weather'),
@@ -71,22 +74,39 @@ export default function GrowthPage() {
     {
       id: 'multi-target-track',
       name: '多目标追踪',
-      description: '同时追踪多个目标的能力',
+      description: '解锁多目标同时入侵的高级任务场景',
       cost: 500,
       icon: <Target size={24} />,
       unlocked: unlockedFeatures.includes('multi-target-track'),
     },
   ];
 
+  const showError = (msg: string) => {
+    setErrorMsg(msg);
+    setTimeout(() => setErrorMsg(null), 2500);
+  };
+
   const handleUnlockSensor = (sensorId: string, cost: number) => {
-    if (totalScore >= cost && !unlockedSensors.includes(sensorId)) {
-      unlockSensor(sensorId);
+    if (unlockedSensors.includes(sensorId)) return;
+    if (credits < cost) {
+      showError(`积分不足！需要 ${cost} 积分，当前可用 ${credits} 积分`);
+      return;
+    }
+    const success = unlockSensor(sensorId, cost);
+    if (!success) {
+      showError('解锁失败，请稍后重试');
     }
   };
 
   const handleUnlockFeature = (featureId: string, cost: number) => {
-    if (totalScore >= cost && !unlockedFeatures.includes(featureId)) {
-      unlockFeature(featureId);
+    if (unlockedFeatures.includes(featureId)) return;
+    if (credits < cost) {
+      showError(`积分不足！需要 ${cost} 积分，当前可用 ${credits} 积分`);
+      return;
+    }
+    const success = unlockFeature(featureId, cost);
+    if (!success) {
+      showError('解锁失败，请稍后重试');
     }
   };
 
@@ -119,13 +139,25 @@ export default function GrowthPage() {
           </div>
 
           <div className="flex items-center gap-4">
+            <div className="flex items-center gap-2 px-4 py-2 bg-cyan-500/10 border border-cyan-500/30">
+              <Trophy className="text-cyan-400" size={18} />
+              <span className="text-cyan-300 font-bold">{totalScore}</span>
+              <span className="text-cyan-400/60 text-sm">总积分</span>
+            </div>
             <div className="flex items-center gap-2 px-4 py-2 bg-yellow-500/10 border border-yellow-500/30">
               <Star className="text-yellow-400 fill-yellow-400" size={18} />
-              <span className="text-yellow-300 font-bold">{totalScore}</span>
-              <span className="text-yellow-400/60 text-sm">积分</span>
+              <span className="text-yellow-300 font-bold">{credits}</span>
+              <span className="text-yellow-400/60 text-sm">可用积分</span>
             </div>
           </div>
         </header>
+
+        {errorMsg && (
+          <div className="mb-4 flex items-center gap-2 px-4 py-3 bg-red-500/10 border border-red-500/30 text-red-300 text-sm">
+            <AlertCircle size={18} />
+            {errorMsg}
+          </div>
+        )}
 
         <div className="grid grid-cols-12 gap-6">
           <div className="col-span-4">
@@ -195,7 +227,7 @@ export default function GrowthPage() {
                 <div className="grid grid-cols-2 gap-4">
                   {SENSORS.map((sensor) => {
                     const isUnlocked = unlockedSensors.includes(sensor.id);
-                    const canAfford = totalScore >= sensor.cost;
+                    const canAfford = credits >= sensor.cost;
 
                     return (
                       <div
@@ -266,7 +298,7 @@ export default function GrowthPage() {
               <HudPanel title="特殊能力">
                 <div className="grid grid-cols-2 gap-4">
                   {features.map((feature) => {
-                    const canAfford = totalScore >= feature.cost;
+                    const canAfford = credits >= feature.cost;
 
                     return (
                       <div
