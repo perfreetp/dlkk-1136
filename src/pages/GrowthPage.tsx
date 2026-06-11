@@ -499,9 +499,12 @@ export default function GrowthPage() {
                 <div className="space-y-6">
                   {trainingLines.map((line) => {
                     const isLineUnlocked = line.featureId === 'basic' || unlockedFeatures.includes(line.featureId);
-                    const completedMissionIds = missionHistory.map((h) => h.missionId);
-                    const completedNodes = line.nodes.filter((n) => completedMissionIds.includes(n.missionId));
+                    const completedMissionIds = new Set(missionHistory.map((h) => h.missionId));
+                    const completedNodes = line.nodes.filter((n) => completedMissionIds.has(n.missionId));
                     const progress = line.nodes.length > 0 ? Math.round((completedNodes.length / line.nodes.length) * 100) : 0;
+
+                    const firstIncompleteNode = line.nodes.find((n) => !completedMissionIds.has(n.missionId));
+                    const firstIncompleteIndex = line.nodes.findIndex((n) => !completedMissionIds.has(n.missionId));
 
                     return (
                       <div
@@ -569,8 +572,8 @@ export default function GrowthPage() {
                           )}
                           <div className="space-y-3">
                             {line.nodes.map((node, idx) => {
-                              const history = missionHistory.find((h) => h.missionId === node.missionId);
-                              const isCompleted = !!history;
+                              const isCompleted = completedMissionIds.has(node.missionId);
+                              const history = missionHistory.filter((h) => h.missionId === node.missionId).sort((a, b) => b.completedAt - a.completedAt)[0];
 
                               return (
                                 <div
@@ -662,20 +665,20 @@ export default function GrowthPage() {
                           </div>
                         )}
 
-                        {isLineUnlocked && progress < 100 && (
+                        {isLineUnlocked && progress < 100 && firstIncompleteNode && (
                           <div className="mt-4 pt-4 border-t border-slate-700/50">
                             <div className="text-xs flex items-start gap-2">
                               <span className="text-green-400 mt-0.5">🎯</span>
                               <div>
                                 <span className="text-slate-400">推荐下一步：</span>
                                 <span className="text-white ml-1">
-                                  完成节点 {completedNodes.length + 1}：
-                                  {line.nodes[completedNodes.length]?.label}
+                                  完成节点 {firstIncompleteIndex + 1}：
+                                  {firstIncompleteNode.label}
                                 </span>
                               </div>
                             </div>
                             <div className="text-xs text-slate-500 mt-1 ml-5">
-                              预计可获得 {line.nodes[completedNodes.length]?.reward} 积分奖励
+                              预计可获得 {firstIncompleteNode.reward} 积分奖励
                             </div>
                           </div>
                         )}
@@ -691,8 +694,8 @@ export default function GrowthPage() {
                     <div className="grid grid-cols-4 gap-4 text-center">
                       {trainingLines.map((line) => {
                         const isLineUnlocked = line.featureId === 'basic' || unlockedFeatures.includes(line.featureId);
-                        const completedMissionIds = missionHistory.map((h) => h.missionId);
-                        const completedNodes = line.nodes.filter((n) => completedMissionIds.includes(n.missionId));
+                        const completedMissionIds = new Set(missionHistory.map((h) => h.missionId));
+                        const completedNodes = line.nodes.filter((n) => completedMissionIds.has(n.missionId));
                         const progress = line.nodes.length > 0 ? Math.round((completedNodes.length / line.nodes.length) * 100) : 0;
                         return (
                           <div key={line.id}>
@@ -902,9 +905,10 @@ function ProfileTab({
 
   const areaOptions = [
     { value: 'all', label: '全部区域' },
-    { value: 'commercial', label: '商业区' },
+    { value: 'business', label: '商业区' },
     { value: 'airport', label: '机场周边' },
-    { value: 'stadium', label: '赛事现场' },
+    { value: 'event', label: '赛事现场' },
+    { value: 'industrial', label: '工业园区' },
     { value: 'residential', label: '居民区' },
   ];
 

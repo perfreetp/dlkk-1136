@@ -20,6 +20,7 @@ export default function IdentifyPage() {
 
   const [showReference, setShowReference] = useState(true);
   const [feedback, setFeedback] = useState<{ targetId: string; correct: boolean } | null>(null);
+  const [isIdentifying, setIsIdentifying] = useState(false);
 
   const pendingTargets = detectedTargets.filter((t) => t.detected && !t.identified);
   const identifiedTargets = detectedTargets.filter((t) => t.identified);
@@ -28,9 +29,14 @@ export default function IdentifyPage() {
     const target = detectedTargets.find((t) => t.id === targetId);
     if (!target) return;
     if (target.identified) return;
+    if (isIdentifying) return;
 
+    setIsIdentifying(true);
     const success = identifyTarget(targetId, type);
-    if (!success) return;
+    if (!success) {
+      setIsIdentifying(false);
+      return;
+    }
 
     const isCorrect = target.trueType === type;
     setFeedback({ targetId, correct: isCorrect });
@@ -40,6 +46,7 @@ export default function IdentifyPage() {
       const state = useGameStore.getState();
       const refreshed = state.detectedTargets.find((t) => t.id === targetId);
       if (refreshed) selectTarget(refreshed);
+      setIsIdentifying(false);
     }, 1000);
   };
 
@@ -114,7 +121,10 @@ export default function IdentifyPage() {
             {pendingTargets.map((target, index) => (
               <div
                 key={target.id}
-                onClick={() => selectTarget(target)}
+                onClick={() => {
+                  setIsIdentifying(false);
+                  selectTarget(target);
+                }}
                 className={`p-3 border cursor-pointer transition-all ${
                   selectedTarget?.id === target.id
                     ? 'border-cyan-400 bg-cyan-500/10'
@@ -143,7 +153,10 @@ export default function IdentifyPage() {
                 {identifiedTargets.map((target, index) => (
                   <div
                     key={target.id}
-                    onClick={() => selectTarget(target)}
+                    onClick={() => {
+                      setIsIdentifying(false);
+                      selectTarget(target);
+                    }}
                     className={`p-3 border cursor-pointer transition-all opacity-70 ${
                       selectedTarget?.id === target.id
                         ? 'border-cyan-400 bg-cyan-500/10'

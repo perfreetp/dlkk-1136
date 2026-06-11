@@ -32,6 +32,7 @@ export default function DisposePage() {
 
   const [disposalLog, setDisposalLog] = useState<string[]>([]);
   const [isSubmitting, setIsSubmitting] = useState(false);
+  const [isDisposing, setIsDisposing] = useState(false);
 
   const blackFlightTargets = detectedTargets.filter(
     (t) => t.isBlackFlight || t.type === 'blackFlight'
@@ -88,8 +89,10 @@ export default function DisposePage() {
   const handleDisposal = (action: DisposalAction) => {
     if (!selectedTarget) return;
     if (selectedTarget.disposalStatus) return;
+    if (isDisposing) return;
 
-    setDisposal(selectedTarget.id, action);
+    setIsDisposing(true);
+    const targetId = selectedTarget.id;
 
     const actionNames: Record<DisposalAction, string> = {
       warn: '喊话警告',
@@ -99,6 +102,7 @@ export default function DisposePage() {
       release: '放行',
     };
 
+    setDisposal(targetId, action);
     setDisposalLog((prev) => [
       `[${new Date().toLocaleTimeString()}] 对目标执行 ${actionNames[action]}`,
       ...prev,
@@ -106,8 +110,9 @@ export default function DisposePage() {
 
     setTimeout(() => {
       const state = useGameStore.getState();
-      const refreshed = state.detectedTargets.find((t) => t.id === selectedTarget.id);
+      const refreshed = state.detectedTargets.find((t) => t.id === targetId);
       if (refreshed) selectTarget(refreshed);
+      setIsDisposing(false);
     }, 300);
   };
 
@@ -202,7 +207,10 @@ export default function DisposePage() {
             {detectedTargets.filter(t => t.detected).map((target, index) => (
               <div
                 key={target.id}
-                onClick={() => selectTarget(target)}
+                onClick={() => {
+                  setIsDisposing(false);
+                  selectTarget(target);
+                }}
                 className={`p-3 border cursor-pointer transition-all ${
                   selectedTarget?.id === target.id
                     ? 'border-red-400 bg-red-500/10'
