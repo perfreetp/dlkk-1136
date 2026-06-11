@@ -29,6 +29,9 @@ export interface Target {
   identified: boolean;
   disposalStatus?: DisposalAction;
   riskPath?: { x: number; y: number }[];
+  detectedAt: number;
+  identifiedAt?: number;
+  disposedAt?: number;
 }
 
 export interface Mission {
@@ -94,12 +97,53 @@ export interface PlayerState {
   missionHistory: MissionResult[];
 }
 
+export interface TargetSummary {
+  id: string;
+  trueType: TargetType;
+  playerType: TargetType | null;
+  isCorrect: boolean | null;
+  disposalAction: DisposalAction | null;
+  signalStrength: number;
+  soundFrequency: number;
+  soundPattern: string;
+  radarSignature: string;
+  videoDescription: string;
+  detectedAt: number;
+  identifiedAt: number | null;
+  disposedAt: number | null;
+}
+
+export interface TimelineEvent {
+  id: string;
+  timestamp: number;
+  type: 'detection' | 'identification' | 'disposal' | 'fence' | 'patrol';
+  title: string;
+  description: string;
+  targetId?: string;
+  targetType?: TargetType;
+  playerType?: TargetType;
+  disposalAction?: DisposalAction;
+  correct?: boolean;
+  result?: 'correct' | 'wrong';
+}
+
 export interface MissionResult {
   id: string;
   missionId: string;
   missionName: string;
+  missionType: MissionType;
+  weather: WeatherType;
   score: Score;
   completedAt: number;
+  targets: TargetSummary[];
+  events: TimelineEvent[];
+  correctCount: number;
+  wrongCount: number;
+  unidentifiedCount: number;
+  blackFlightCount: number;
+  birdCount: number;
+  legitimateCount: number;
+  noiseCount: number;
 }
 
 export interface Achievement {

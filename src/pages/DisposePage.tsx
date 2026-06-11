@@ -87,6 +87,7 @@ export default function DisposePage() {
 
   const handleDisposal = (action: DisposalAction) => {
     if (!selectedTarget) return;
+    if (selectedTarget.disposalStatus) return;
 
     setDisposal(selectedTarget.id, action);
 
@@ -102,6 +103,12 @@ export default function DisposePage() {
       `[${new Date().toLocaleTimeString()}] 对目标执行 ${actionNames[action]}`,
       ...prev,
     ]);
+
+    setTimeout(() => {
+      const state = useGameStore.getState();
+      const refreshed = state.detectedTargets.find((t) => t.id === selectedTarget.id);
+      if (refreshed) selectTarget(refreshed);
+    }, 300);
   };
 
   const handleEndMission = () => {
@@ -299,42 +306,46 @@ export default function DisposePage() {
                     </div>
                   </div>
 
-                  <div>
-                    <h4 className="text-sm font-bold text-white mb-4 text-center">
-                      选择处置方式
-                    </h4>
-                    <div className="grid grid-cols-5 gap-3">
-                      {disposalActions.map(
-                        ({ action, label, icon, variant, description }) => (
-                          <div key={action} className="space-y-2">
-                            <GlowButton
-                              variant={variant}
-                              onClick={() => handleDisposal(action)}
-                              disabled={!!selectedTarget.disposalStatus}
-                              className="w-full flex flex-col items-center gap-2 py-4"
-                            >
-                              {icon}
-                              <span className="text-xs">{label}</span>
-                            </GlowButton>
-                            <p className="text-xs text-slate-500 text-center">
-                              {description}
-                            </p>
-                          </div>
-                        )
-                      )}
+                  {!selectedTarget.disposalStatus ? (
+                    <div>
+                      <h4 className="text-sm font-bold text-white mb-4 text-center">
+                        选择处置方式
+                      </h4>
+                      <div className="grid grid-cols-5 gap-3">
+                        {disposalActions.map(
+                          ({ action, label, icon, variant, description }) => (
+                            <div key={action} className="space-y-2">
+                              <GlowButton
+                                variant={variant}
+                                onClick={() => handleDisposal(action)}
+                                className="w-full flex flex-col items-center gap-2 py-4"
+                              >
+                                {icon}
+                                <span className="text-xs">{label}</span>
+                              </GlowButton>
+                              <p className="text-xs text-slate-500 text-center">
+                                {description}
+                              </p>
+                            </div>
+                          )
+                        )}
+                      </div>
                     </div>
-                  </div>
-
-                  {selectedTarget.disposalStatus && (
+                  ) : (
                     <div className="p-4 bg-green-500/10 border border-green-500/30 text-center">
                       <CheckCircle className="text-green-400 mx-auto mb-2" size={24} />
-                      <p className="text-green-300 text-sm">
-                        已完成处置：
+                      <p className="text-green-300 text-sm font-bold">
+                        已完成处置
+                      </p>
+                      <p className="text-green-400 text-xs mt-1">
                         {selectedTarget.disposalStatus === 'warn' && '喊话警告'}
                         {selectedTarget.disposalStatus === 'track' && '持续跟踪'}
                         {selectedTarget.disposalStatus === 'report' && '上报指挥'}
                         {selectedTarget.disposalStatus === 'intercept' && '拦截处置'}
                         {selectedTarget.disposalStatus === 'release' && '放行'}
+                      </p>
+                      <p className="text-slate-500 text-xs mt-2">
+                        处置已锁定，无法更改
                       </p>
                     </div>
                   )}

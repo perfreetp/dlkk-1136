@@ -11,6 +11,8 @@ import type {
   PlayerState,
   MissionResult,
   TargetType,
+  TargetSummary,
+  TimelineEvent,
 } from '../types/game';
 import { MISSIONS } from '../data/gameData';
 
@@ -25,8 +27,10 @@ interface GameStore {
   startTime: number;
   elapsedTime: number;
   score: Score | null;
+  fullResult: MissionResult | null;
   isPaused: boolean;
   settled: boolean;
+  generateFullResult: () => MissionResult | null;
 
   setPhase: (phase: GamePhase) => void;
   startMission: (mission: Mission) => void;
@@ -61,6 +65,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   startTime: 0,
   elapsedTime: 0,
   score: null,
+  fullResult: null,
   isPaused: false,
   settled: false,
 
@@ -78,6 +83,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       startTime: Date.now(),
       elapsedTime: 0,
       score: null,
+      fullResult: null,
       settled: false,
     }),
 
@@ -94,6 +100,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     if (!target) return false;
     if (target.identified) return false;
 
+    const now = Date.now();
     const isCorrect = target.trueType === type;
 
     const typeNames: Record<TargetType, string> = {
@@ -105,8 +112,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
     };
 
     const event: GameEvent = {
-      id: `event-${Date.now()}-${Math.random()}`,
-      timestamp: Date.now(),
+      id: `event-${now}-${Math.random()}`,
+      timestamp: now,
       type: 'identification',
       description: `目标识别为 ${typeNames[type]}${isCorrect ? ' ✓' : ' ✗'}`,
       targetId,
@@ -117,7 +124,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
     set({
       detectedTargets: state.detectedTargets.map((t) =>
-        t.id === targetId ? { ...t, identified: true, type } : t
+        t.id === targetId ? { ...t, identified: true, type, identifiedAt: now } : t
       ),
       events: [...state.events, event],
     });
@@ -182,37 +189,40 @@ export const useGameStore = create<GameStore>((set, get) => ({
       events: [...state.events, event],
     })),
 
-  setDisposal: (targetId, action) =>
-    set((state) => {
-      const target = state.detectedTargets.find((t) => t.id === targetId);
-      if (!target) return state;
+  setDisposal: (targetId, action) => {
+    const state = get();
+    const target = state.detectedTargets.find((t) => t.id === targetId);
+    if (!target) return state;
+    if (target.disposalStatus) return state;
 
-      const actionNames: Record<string, string> = {
-        warn: '喊话警告',
-        track: '持续跟踪',
-        report: '上报指挥',
-        intercept: '拦截处置',
-        release: '放行',
-      };
+    const now = Date.now();
 
-      const event: GameEvent = {
-        id: `event-${Date.now()}-${Math.random()}`,
-        timestamp: Date.now(),
-        type: 'disposal',
-        description: `对目标执行 ${actionNames[action] || action}`,
-        targetId,
-        disposalAction: action,
-      };
+    const actionNames: Record<string, string> = {
+      warn: '喊话警告',
+      track: '持续跟踪',
+      report: '上报指挥',
+      intercept: '拦截处置',
+      release: '放行',
+    };
 
-      return {
-        detectedTargets: state.detectedTargets.map((t) =>
-          t.id === targetId
-            ? { ...t, disposalStatus: action as Target['disposalStatus'] }
-            : t
-        ),
-        events: [...state.events, event],
-      };
-    }),
+    const event: GameEvent = {
+      id: `event-${now}-${Math.random()}`,
+      timestamp: now,
+      type: 'disposal',
+      description: `对目标执行 ${actionNames[action] || action}`,
+      targetId,
+      disposalAction: action,
+    };
+
+    return {
+      detectedTargets: state.detectedTargets.map((t) =>
+        t.id === targetId
+          ? { ...t, disposalStatus: action as Target['disposalStatus'], disposedAt: now }
+          : t
+      ),
+      events: [...state.events, event],
+    };
+  },
 
   setTargetRiskPath: (targetId, path) =>
     set((state) => ({
@@ -220,6 +230,127 @@ export const useGameStore = create<GameStore>((set, get) => ({
         t.id === targetId ? { ...t, riskPath: path } : t
       ),
     })),
+
+  generateFullResult: () => {
+    const state = get();
+    const mission = state.currentMission;
+    if (!mission) return null;
+
+    const targets: TargetSummary[] = state.detectedTargets.map((t) => {
+      const idEvent = state.events.find(
+        (e) => e.type === 'identification' && e.targetId === t.id
+      );
+      const dpEvent = state.events.find(
+        (e) => e.type === 'disposal' && e.targetId === t.id
+      );
+      const playerType = idEvent?.playerType as TargetType | undefined || (t.identified ? t.type : null);
+      const isCorrect = idEvent ? idEvent.result === 'correct' : (playerType ? playerType === t.trueType : null);
+      const disposalAction = (dpEvent?.disposalAction as Target['disposalStatus']) || t.disposalStatus || null;
+
+      return {
+        id: t.id,
+        trueType: t.trueType,
+        playerType,
+        isCorrect,
+        disposalAction,
+        signalStrength: t.signalStrength,
+        soundFrequency: t.soundFrequency,
+        soundPattern: t.soundPattern,
+        radarSignature: t.radarSignature,
+        videoDescription: t.videoDescription,
+        detectedAt: t.detectedAt,
+        identifiedAt: t.identifiedAt || null,
+        disposedAt: t.disposedAt || null,
+      };
+    });
+
+    const typeNames: Record<TargetType, string> = {
+      blackFlight: '黑飞无人机',
+      bird: '鸟群',
+      legitimate: '合法航线',
+      noise: '设备噪声',
+      unknown: '未识别',
+    };
+
+    const actionNames: Record<string, string> = {
+      warn: '喊话警告',
+      track: '持续跟踪',
+      report: '上报指挥',
+      intercept: '拦截处置',
+      release: '放行',
+    };
+
+    const timeline: TimelineEvent[] = state.events
+      .map((e) => {
+        if (e.type === 'detection') {
+          const t = state.detectedTargets.find((t) => t.id === e.targetId);
+          return {
+            id: e.id,
+            timestamp: e.timestamp,
+            type: 'detection' as const,
+            title: '发现目标',
+            description: t ? `目标出现，位置 ${t.x.toFixed(1)}, ${t.y.toFixed(1)}` : e.description,
+            targetId: e.targetId,
+            targetType: t?.trueType,
+          };
+        }
+        if (e.type === 'identification') {
+          const isCorrect = e.result === 'correct';
+          return {
+            id: e.id,
+            timestamp: e.timestamp,
+            type: 'identification' as const,
+            title: isCorrect ? '判读正确' : '判读错误',
+            description: `识别为「${typeNames[e.playerType as TargetType] || e.playerType}」，真实为「${typeNames[e.trueType as TargetType] || e.trueType}」`,
+            targetId: e.targetId,
+            targetType: e.trueType as TargetType,
+            playerType: e.playerType as TargetType,
+            result: e.result as 'correct' | 'wrong',
+            correct: isCorrect,
+          };
+        }
+        if (e.type === 'disposal') {
+          return {
+            id: e.id,
+            timestamp: e.timestamp,
+            type: 'disposal' as const,
+            title: '执行处置',
+            description: `执行措施：${actionNames[e.disposalAction || ''] || e.disposalAction}`,
+            targetId: e.targetId,
+            disposalAction: e.disposalAction as Target['disposalStatus'],
+          };
+        }
+        return null;
+      })
+      .filter(Boolean)
+      .sort((a, b) => a!.timestamp - b!.timestamp) as TimelineEvent[];
+
+    const correctCount = targets.filter((t) => t.isCorrect === true).length;
+    const wrongCount = targets.filter((t) => t.isCorrect === false).length;
+    const unidentifiedCount = targets.filter((t) => t.isCorrect === null).length;
+
+    const countByType = (type: TargetType) =>
+      targets.filter((t) => t.trueType === type).length;
+
+    return {
+      id: '',
+      missionId: mission.id,
+      missionName: mission.name,
+      missionType: mission.type,
+      weather: mission.weather,
+      score: state.score!,
+      completedAt: Date.now(),
+      targets,
+      events: timeline,
+      correctCount,
+      wrongCount,
+      unidentifiedCount,
+      blackFlightCount: countByType('blackFlight'),
+      birdCount: countByType('bird'),
+      legitimateCount: countByType('legitimate'),
+      noiseCount: countByType('noise'),
+    };
+  },
 
   endMission: () => {
     const state = get();
@@ -282,6 +413,13 @@ export const useGameStore = create<GameStore>((set, get) => ({
       currentPhase: 'review',
       score,
     });
+
+    setTimeout(() => {
+      const full = get().generateFullResult();
+      if (full) {
+        set({ fullResult: full });
+      }
+    }, 0);
   },
 
   updateElapsedTime: (time) => set({ elapsedTime: time }),
@@ -298,6 +436,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       startTime: 0,
       elapsedTime: 0,
       score: null,
+      fullResult: null,
       settled: false,
     }),
 

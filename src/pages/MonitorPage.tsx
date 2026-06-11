@@ -72,6 +72,7 @@ function generateTarget(id: string, type: TargetType, isBlackFlight: boolean): T
     isBlackFlight,
     detected: false,
     identified: false,
+    detectedAt: 0,
     riskPath,
   };
 }
@@ -111,16 +112,18 @@ export default function MonitorPage() {
 
     targetTypes.forEach((t, index) => {
       setTimeout(() => {
+        const now = Date.now();
         const target = generateTarget(
           `target-${index}`,
           t.type,
           t.isBlack
         );
         target.detected = true;
+        target.detectedAt = now;
         addTarget(target);
         addEvent({
           id: `event-detect-${index}`,
-          timestamp: Date.now(),
+          timestamp: now,
           type: 'detection',
           description: `发现可疑目标 #${index + 1}`,
           targetId: target.id,

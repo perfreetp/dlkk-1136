@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useState, useMemo } from 'react';
 import { useNavigate } from 'react-router-dom';
 import {
   ArrowLeft,
@@ -16,15 +16,39 @@ import {
   AlertCircle,
   Route,
   CircleDot,
+  FileText,
+  User,
+  Filter,
+  MapPin,
+  ThermometerSun,
+  Bird,
+  Plane,
+  Radio,
+  X,
+  BarChart3,
+  Clock,
+  Users,
+  FileCheck,
+  AlertTriangle,
+  CheckCircle,
+  XCircle,
 } from 'lucide-react';
 import { usePlayerStore, MISSIONS } from '../store/useGameStore';
-import { SENSORS, ACHIEVEMENTS } from '../data/gameData';
+import { SENSORS, ACHIEVEMENTS, TARGET_REFERENCES } from '../data/gameData';
 import { HudPanel } from '../components/common/HudPanel';
 import { GlowButton } from '../components/common/GlowButton';
 import { StatusBadge } from '../components/common/StatusBadge';
-import type { Mission } from '../types/game';
+import type { Mission, MissionResult, MissionType, WeatherType, TargetType } from '../types/game';
 
-type TabType = 'sensors' | 'achievements' | 'features' | 'training';
+type TabType = 'sensors' | 'achievements' | 'features' | 'training' | 'profile';
+
+const TYPE_NAMES: Record<TargetType, string> = {
+  blackFlight: '黑飞无人机',
+  bird: '鸟群',
+  legitimate: '合法航线',
+  noise: '设备噪声',
+  unknown: '未识别',
+};
 
 interface TrainingNode {
   id: string;
@@ -42,6 +66,8 @@ interface TrainingLine {
   color: string;
   icon: React.ReactNode;
   nodes: TrainingNode[];
+  unlockCondition: string;
+  recommendedPrereq: string[];
 }
 
 export default function GrowthPage() {
@@ -62,6 +88,10 @@ export default function GrowthPage() {
 
   const [activeTab, setActiveTab] = useState<TabType>('sensors');
   const [errorMsg, setErrorMsg] = useState<string | null>(null);
+  const [filterArea, setFilterArea] = useState<string>('all');
+  const [filterWeather, setFilterWeather] = useState<string>('all');
+  const [filterTargetType, setFilterTargetType] = useState<string>('all');
+  const [selectedReport, setSelectedReport] = useState<MissionResult | null>(null);
 
   const expToNextLevel = level * 500;
   const expProgress = (experience / expToNextLevel) * 100;
@@ -135,6 +165,7 @@ export default function GrowthPage() {
     { id: 'sensors', label: '传感器', icon: <Cpu size={16} /> },
     { id: 'features', label: '能力解锁', icon: <Zap size={16} /> },
     { id: 'training', label: '训练路线', icon: <Route size={16} /> },
+    { id: 'profile', label: '值守员档案', icon: <User size={16} /> },
     { id: 'achievements', label: '成就', icon: <Trophy size={16} /> },
   ];
 
@@ -146,6 +177,8 @@ export default function GrowthPage() {
       subtitle: '新手入门，所有值守员必做',
       color: '#00d4ff',
       icon: <Cpu size={22} />,
+      unlockCondition: '默认开放',
+      recommendedPrereq: [],
       nodes: MISSIONS.filter((m) => !m.requiredFeature).map((m) => ({
         id: m.id,
         missionId: m.id,
@@ -161,6 +194,8 @@ export default function GrowthPage() {
       subtitle: '解锁「夜间模式」后开放',
       color: '#a78bfa',
       icon: <Moon size={22} />,
+      unlockCondition: '需在能力解锁中花费 300 积分解锁「夜间模式」',
+      recommendedPrereq: ['基础值守训练完成度 >= 50%'],
       nodes: MISSIONS.filter((m) => m.requiredFeature === 'night-mode').map((m) => ({
         id: m.id,
         missionId: m.id,
@@ -176,6 +211,8 @@ export default function GrowthPage() {
       subtitle: '解锁「恶劣天气」后开放',
       color: '#60a5fa',
       icon: <Cloud size={22} />,
+      unlockCondition: '需在能力解锁中花费 400 积分解锁「恶劣天气」',
+      recommendedPrereq: ['基础值守训练完成度 >= 50%'],
       nodes: MISSIONS.filter((m) => m.requiredFeature === 'bad-weather').map((m) => ({
         id: m.id,
         missionId: m.id,
@@ -191,6 +228,8 @@ export default function GrowthPage() {
       subtitle: '解锁「多目标追踪」后开放',
       color: '#f472b6',
       icon: <Target size={22} />,
+      unlockCondition: '需在能力解锁中花费 500 积分解锁「多目标追踪」',
+      recommendedPrereq: ['基础值守训练全部完成', '夜间/天气训练至少完成 1 个'],
       nodes: MISSIONS.filter((m) => m.requiredFeature === 'multi-target-track').map((m) => ({
         id: m.id,
         missionId: m.id,
@@ -202,7 +241,8 @@ export default function GrowthPage() {
   ];
 
   return (
-    <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white">
+    <>
+      <div className="min-h-screen bg-gradient-to-br from-slate-950 via-slate-900 to-slate-950 text-white">
       <div className="absolute inset-0 bg-[linear-gradient(rgba(0,212,255,0.02)_1px,transparent_1px),linear-gradient(90deg,rgba(0,212,255,0.02)_1px,transparent_1px)] bg-[size:40px_40px]" />
 
       <div className="relative z-10 max-w-5xl mx-auto px-6 py-8">
@@ -603,11 +643,86 @@ export default function GrowthPage() {
                             })}
                           </div>
                         </div>
+
+                        {!isLineUnlocked && (
+                          <div className="mt-4 pt-4 border-t border-slate-700/50 space-y-2">
+                            <div className="text-xs">
+                              <span className="text-slate-500">🔒 解锁条件：</span>
+                              <span className="text-yellow-400 ml-1">{line.unlockCondition}</span>
+                            </div>
+                            {line.recommendedPrereq.length > 0 && (
+                              <div className="text-xs">
+                                <span className="text-slate-500">📋 前置建议：</span>
+                                <span className="text-cyan-400 ml-1">{line.recommendedPrereq.join('；')}</span>
+                              </div>
+                            )}
+                            <div className="text-xs text-slate-600 mt-2">
+                              💡 建议先完成基础训练并积分解锁对应能力后再挑战此路线
+                            </div>
+                          </div>
+                        )}
+
+                        {isLineUnlocked && progress < 100 && (
+                          <div className="mt-4 pt-4 border-t border-slate-700/50">
+                            <div className="text-xs flex items-start gap-2">
+                              <span className="text-green-400 mt-0.5">🎯</span>
+                              <div>
+                                <span className="text-slate-400">推荐下一步：</span>
+                                <span className="text-white ml-1">
+                                  完成节点 {completedNodes.length + 1}：
+                                  {line.nodes[completedNodes.length]?.label}
+                                </span>
+                              </div>
+                            </div>
+                            <div className="text-xs text-slate-500 mt-1 ml-5">
+                              预计可获得 {line.nodes[completedNodes.length]?.reward} 积分奖励
+                            </div>
+                          </div>
+                        )}
                       </div>
                     );
                   })}
+
+                  <div className="mt-6 p-4 bg-cyan-500/5 border border-cyan-500/20 rounded-sm">
+                    <h4 className="text-sm font-bold text-cyan-300 mb-3 flex items-center gap-2">
+                      <BarChart3 size={16} />
+                      训练进度总览
+                    </h4>
+                    <div className="grid grid-cols-4 gap-4 text-center">
+                      {trainingLines.map((line) => {
+                        const isLineUnlocked = line.featureId === 'basic' || unlockedFeatures.includes(line.featureId);
+                        const completedMissionIds = missionHistory.map((h) => h.missionId);
+                        const completedNodes = line.nodes.filter((n) => completedMissionIds.includes(n.missionId));
+                        const progress = line.nodes.length > 0 ? Math.round((completedNodes.length / line.nodes.length) * 100) : 0;
+                        return (
+                          <div key={line.id}>
+                            <div
+                              className="text-2xl font-bold"
+                              style={{ color: isLineUnlocked ? line.color : '#64748b' }}
+                            >
+                              {isLineUnlocked ? `${progress}%` : '—'}
+                            </div>
+                            <div className="text-xs text-slate-500 mt-1">{line.title}</div>
+                          </div>
+                        );
+                      })}
+                    </div>
+                  </div>
                 </div>
               </HudPanel>
+            )}
+
+            {activeTab === 'profile' && (
+              <ProfileTab
+                missionHistory={missionHistory}
+                filterArea={filterArea}
+                setFilterArea={setFilterArea}
+                filterWeather={filterWeather}
+                setFilterWeather={setFilterWeather}
+                filterTargetType={filterTargetType}
+                setFilterTargetType={setFilterTargetType}
+                onSelectReport={setSelectedReport}
+              />
             )}
 
             {activeTab === 'achievements' && (
@@ -710,6 +825,468 @@ export default function GrowthPage() {
             返回主控室
             <ChevronRight size={18} />
           </GlowButton>
+        </div>
+      </div>
+    </div>
+
+    {selectedReport && (
+      <ReportSummaryModal
+        report={selectedReport}
+        onClose={() => setSelectedReport(null)}
+      />
+    )}
+    </>
+  );
+}
+
+function ProfileTab({
+  missionHistory,
+  filterArea,
+  setFilterArea,
+  filterWeather,
+  setFilterWeather,
+  filterTargetType,
+  setFilterTargetType,
+  onSelectReport,
+}: {
+  missionHistory: MissionResult[];
+  filterArea: string;
+  setFilterArea: (v: string) => void;
+  filterWeather: string;
+  setFilterWeather: (v: string) => void;
+  filterTargetType: string;
+  setFilterTargetType: (v: string) => void;
+  onSelectReport: (r: MissionResult) => void;
+}) {
+  const filteredHistory = useMemo(() => {
+    return missionHistory
+      .slice()
+      .sort((a, b) => b.completedAt - a.completedAt)
+      .filter((r) => {
+        if (filterArea !== 'all' && r.missionType !== filterArea) return false;
+        if (filterWeather !== 'all' && r.weather !== filterWeather) return false;
+        if (filterTargetType !== 'all') {
+          const hasTarget = r.targets.some((t) => t.trueType === filterTargetType);
+          if (!hasTarget) return false;
+        }
+        return true;
+      });
+  }, [missionHistory, filterArea, filterWeather, filterTargetType]);
+
+  const stats = useMemo(() => {
+    if (filteredHistory.length === 0) {
+      return {
+        totalMissions: 0,
+        avgScore: 0,
+        totalCorrect: 0,
+        totalWrong: 0,
+        totalUnidentified: 0,
+        avgAccuracy: 0,
+      };
+    }
+    const totalScore = filteredHistory.reduce((sum, r) => sum + r.score.total, 0);
+    const totalCorrect = filteredHistory.reduce((sum, r) => sum + r.correctCount, 0);
+    const totalWrong = filteredHistory.reduce((sum, r) => sum + r.wrongCount, 0);
+    const totalUnidentified = filteredHistory.reduce((sum, r) => sum + r.unidentifiedCount, 0);
+    const totalTargets = totalCorrect + totalWrong + totalUnidentified;
+
+    return {
+      totalMissions: filteredHistory.length,
+      avgScore: Math.round(totalScore / filteredHistory.length),
+      totalCorrect,
+      totalWrong,
+      totalUnidentified,
+      avgAccuracy: totalTargets > 0 ? Math.round((totalCorrect / totalTargets) * 100) : 0,
+    };
+  }, [filteredHistory]);
+
+  const areaOptions = [
+    { value: 'all', label: '全部区域' },
+    { value: 'commercial', label: '商业区' },
+    { value: 'airport', label: '机场周边' },
+    { value: 'stadium', label: '赛事现场' },
+    { value: 'residential', label: '居民区' },
+  ];
+
+  const weatherOptions = [
+    { value: 'all', label: '全部天气' },
+    { value: 'clear', label: '晴天' },
+    { value: 'night', label: '夜间' },
+    { value: 'rain', label: '雨天' },
+    { value: 'fog', label: '雾天' },
+  ];
+
+  const targetTypeOptions = [
+    { value: 'all', label: '全部目标类型' },
+    { value: 'blackFlight', label: '黑飞无人机' },
+    { value: 'bird', label: '鸟群' },
+    { value: 'legitimate', label: '合法航班' },
+    { value: 'noise', label: '设备噪声' },
+  ];
+
+  return (
+    <div className="space-y-4">
+      <HudPanel title="值守员档案 · 统计概览">
+        <div className="grid grid-cols-6 gap-4 mb-4">
+          <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+            <div className="text-3xl font-bold text-cyan-400">{stats.totalMissions}</div>
+            <div className="text-xs text-slate-500 mt-1">执行任务</div>
+          </div>
+          <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+            <div className="text-3xl font-bold text-yellow-400">{stats.avgScore}</div>
+            <div className="text-xs text-slate-500 mt-1">平均得分</div>
+          </div>
+          <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+            <div className="text-3xl font-bold text-green-400">{stats.avgAccuracy}%</div>
+            <div className="text-xs text-slate-500 mt-1">平均准确率</div>
+          </div>
+          <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+            <div className="text-3xl font-bold text-green-400">{stats.totalCorrect}</div>
+            <div className="text-xs text-slate-500 mt-1">正确识别</div>
+          </div>
+          <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+            <div className="text-3xl font-bold text-red-400">{stats.totalWrong}</div>
+            <div className="text-xs text-slate-500 mt-1">误判</div>
+          </div>
+          <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+            <div className="text-3xl font-bold text-slate-500">{stats.totalUnidentified}</div>
+            <div className="text-xs text-slate-500 mt-1">漏判</div>
+          </div>
+        </div>
+
+        <div className="flex flex-wrap gap-3 items-center">
+          <div className="flex items-center gap-2">
+            <Filter size={14} className="text-slate-500" />
+            <span className="text-xs text-slate-500">筛选:</span>
+          </div>
+
+          <select
+            value={filterArea}
+            onChange={(e) => setFilterArea(e.target.value)}
+            className="bg-slate-800 border border-slate-600 text-white text-sm px-3 py-1.5 focus:outline-none focus:border-cyan-500"
+          >
+            {areaOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterWeather}
+            onChange={(e) => setFilterWeather(e.target.value)}
+            className="bg-slate-800 border border-slate-600 text-white text-sm px-3 py-1.5 focus:outline-none focus:border-cyan-500"
+          >
+            {weatherOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <select
+            value={filterTargetType}
+            onChange={(e) => setFilterTargetType(e.target.value)}
+            className="bg-slate-800 border border-slate-600 text-white text-sm px-3 py-1.5 focus:outline-none focus:border-cyan-500"
+          >
+            {targetTypeOptions.map((opt) => (
+              <option key={opt.value} value={opt.value}>
+                {opt.label}
+              </option>
+            ))}
+          </select>
+
+          <div className="ml-auto text-xs text-slate-500">
+            共 {filteredHistory.length} 条记录
+          </div>
+        </div>
+      </HudPanel>
+
+      <HudPanel title={`历史任务记录 (${filteredHistory.length})`}>
+        {filteredHistory.length === 0 ? (
+          <div className="py-16 text-center text-slate-500">
+            <FileText size={48} className="mx-auto mb-3 opacity-30" />
+            <p>暂无符合条件的任务记录</p>
+            <p className="text-xs mt-2">去完成一些任务后再回来查看吧</p>
+          </div>
+        ) : (
+          <div className="space-y-2 max-h-[600px] overflow-y-auto">
+            {filteredHistory.map((result) => {
+              const areaLabel = areaOptions.find((o) => o.value === result.missionType)?.label || result.missionType;
+              const weatherLabel = weatherOptions.find((o) => o.value === result.weather)?.label || result.weather;
+              const accuracy =
+                result.correctCount + result.wrongCount + result.unidentifiedCount > 0
+                  ? Math.round(
+                      (result.correctCount /
+                        (result.correctCount + result.wrongCount + result.unidentifiedCount)) *
+                        100
+                    )
+                  : 0;
+
+              return (
+                <div
+                  key={result.id}
+                  onClick={() => onSelectReport(result)}
+                  className="p-4 bg-slate-800/30 border border-slate-700/50 hover:border-cyan-500/50 hover:bg-slate-800/60 cursor-pointer transition-all group"
+                >
+                  <div className="flex items-center justify-between mb-2">
+                    <div className="flex items-center gap-3">
+                      <div className="text-lg font-bold text-white group-hover:text-cyan-300 transition-colors">
+                        {result.missionName}
+                      </div>
+                      <StatusBadge variant="info">{areaLabel}</StatusBadge>
+                      <StatusBadge variant="warning">{weatherLabel}</StatusBadge>
+                      <span className="text-xs text-slate-500">
+                        {new Date(result.completedAt).toLocaleString('zh-CN')}
+                      </span>
+                    </div>
+                    <div className="flex items-center gap-4">
+                      <div className="text-right">
+                        <div className="text-2xl font-bold text-cyan-400">
+                          {result.score.total}分
+                        </div>
+                        <div
+                          className={`text-xs font-bold ${
+                            result.score.grade === 'S'
+                              ? 'text-yellow-400'
+                              : result.score.grade === 'A'
+                              ? 'text-green-400'
+                              : result.score.grade === 'B'
+                              ? 'text-cyan-400'
+                              : 'text-slate-500'
+                          }`}
+                        >
+                          {result.score.grade}级
+                        </div>
+                      </div>
+                      <ChevronRight
+                        size={16}
+                        className="text-slate-500 group-hover:text-cyan-400 transition-colors"
+                      />
+                    </div>
+                  </div>
+
+                  <div className="grid grid-cols-8 gap-2 text-xs">
+                    <div className="col-span-2">
+                      <div className="text-slate-500 mb-0.5">目标类型分布</div>
+                      <div className="flex gap-2">
+                        <span className="text-red-400">黑飞 {result.blackFlightCount}</span>
+                        <span className="text-green-400">鸟群 {result.birdCount}</span>
+                        <span className="text-blue-400">航班 {result.legitimateCount}</span>
+                        <span className="text-yellow-400">噪声 {result.noiseCount}</span>
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-slate-500 mb-0.5">识别统计</div>
+                      <div className="flex gap-2">
+                        <span className="text-green-400">✓ {result.correctCount}</span>
+                        <span className="text-red-400">✗ {result.wrongCount}</span>
+                        <span className="text-slate-500">? {result.unidentifiedCount}</span>
+                      </div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-slate-500 mb-0.5">准确率</div>
+                      <div className="text-white font-bold">{accuracy}%</div>
+                    </div>
+                    <div className="col-span-2">
+                      <div className="text-slate-500 mb-0.5">完成时间</div>
+                      <div className="text-white font-mono">
+                        {new Date(result.completedAt).toLocaleDateString('zh-CN')}
+                      </div>
+                    </div>
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+        )}
+      </HudPanel>
+    </div>
+  );
+}
+
+function ReportSummaryModal({
+  report,
+  onClose,
+}: {
+  report: MissionResult;
+  onClose: () => void;
+}) {
+  const accuracy =
+    report.correctCount + report.wrongCount + report.unidentifiedCount > 0
+      ? Math.round(
+          (report.correctCount /
+            (report.correctCount + report.wrongCount + report.unidentifiedCount)) *
+            100
+        )
+      : 0;
+
+  return (
+    <div className="fixed inset-0 bg-black/70 backdrop-blur-sm z-50 flex items-center justify-center p-6">
+      <div className="bg-slate-900 border border-slate-700 max-w-4xl w-full max-h-[90vh] overflow-y-auto">
+        <div className="sticky top-0 bg-slate-900 border-b border-slate-700 px-6 py-4 flex items-center justify-between">
+          <h3 className="text-lg font-bold text-cyan-300 flex items-center gap-2">
+            <FileText size={20} />
+            复盘报告摘要
+          </h3>
+          <button
+            onClick={onClose}
+            className="p-1.5 hover:bg-slate-800 text-slate-400 hover:text-white transition-colors"
+          >
+            <X size={18} />
+          </button>
+        </div>
+
+        <div className="p-6 space-y-6">
+          <div className="grid grid-cols-5 gap-4">
+            <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+              <div className="text-xs text-slate-500 mb-1">总分</div>
+              <div className="text-2xl font-bold text-cyan-400">{report.score.total}</div>
+            </div>
+            <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+              <div className="text-xs text-slate-500 mb-1">评级</div>
+              <div
+                className={`text-2xl font-bold ${
+                  report.score.grade === 'S'
+                    ? 'text-yellow-400'
+                    : report.score.grade === 'A'
+                    ? 'text-green-400'
+                    : report.score.grade === 'B'
+                    ? 'text-cyan-400'
+                    : 'text-slate-500'
+                }`}
+              >
+                {report.score.grade}
+              </div>
+            </div>
+            <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+              <div className="text-xs text-slate-500 mb-1">准确率</div>
+              <div className="text-2xl font-bold text-green-400">{accuracy}%</div>
+            </div>
+            <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+              <div className="text-xs text-slate-500 mb-1">目标总数</div>
+              <div className="text-2xl font-bold text-white">{report.targets.length}</div>
+            </div>
+            <div className="text-center p-3 bg-slate-800/50 border border-slate-700/50">
+              <div className="text-xs text-slate-500 mb-1">完成时间</div>
+              <div className="text-2xl font-bold text-white">{report.score.responseTime}s</div>
+            </div>
+          </div>
+
+          <div className="grid grid-cols-4 gap-4">
+            <div className="p-3 border border-cyan-500/30 bg-cyan-500/5">
+              <div className="flex items-center gap-2 mb-2">
+                <AlertTriangle size={14} className="text-cyan-400" />
+                <span className="text-xs text-slate-400">误报率</span>
+              </div>
+              <div className="text-xl font-bold text-cyan-400">{report.score.falseAlarmRate}%</div>
+            </div>
+            <div className="p-3 border border-green-500/30 bg-green-500/5">
+              <div className="flex items-center gap-2 mb-2">
+                <Clock size={14} className="text-green-400" />
+                <span className="text-xs text-slate-400">响应时间</span>
+              </div>
+              <div className="text-xl font-bold text-green-400">{report.score.responseTime}s</div>
+            </div>
+            <div className="p-3 border border-yellow-500/30 bg-yellow-500/5">
+              <div className="flex items-center gap-2 mb-2">
+                <Users size={14} className="text-yellow-400" />
+                <span className="text-xs text-slate-400">群众影响</span>
+              </div>
+              <div className="text-xl font-bold text-yellow-400">{report.score.publicImpact}%</div>
+            </div>
+            <div className="p-3 border border-purple-500/30 bg-purple-500/5">
+              <div className="flex items-center gap-2 mb-2">
+                <FileCheck size={14} className="text-purple-400" />
+                <span className="text-xs text-slate-400">证据完整度</span>
+              </div>
+              <div className="text-xl font-bold text-purple-400">{report.score.evidenceCompleteness}%</div>
+            </div>
+          </div>
+
+          <div>
+            <h4 className="text-sm font-bold text-white mb-3">目标详情</h4>
+            <div className="space-y-2 max-h-64 overflow-y-auto">
+              {report.targets.map((target, idx) => {
+                const typeRef = TARGET_REFERENCES[target.trueType];
+                const playerRef = target.playerType ? TARGET_REFERENCES[target.playerType] : null;
+
+                return (
+                  <div
+                    key={target.id}
+                    className="p-3 bg-slate-800/40 border border-slate-700/50"
+                  >
+                    <div className="grid grid-cols-12 gap-2 text-sm">
+                      <div className="col-span-1 text-slate-500 font-mono">#{idx + 1}</div>
+                      <div className="col-span-2">
+                        <span className="font-bold" style={{ color: typeRef?.color }}>
+                          {typeRef?.name || '未知'}
+                        </span>
+                      </div>
+                      <div className="col-span-2">
+                        {target.playerType ? (
+                          <span style={{ color: playerRef?.color || '#888' }}>
+                            {TYPE_NAMES[target.playerType]}
+                          </span>
+                        ) : (
+                          <span className="text-slate-600">— 未判读 —</span>
+                        )}
+                      </div>
+                      <div className="col-span-2">
+                        {target.playerType ? (
+                          target.isCorrect ? (
+                            <span className="text-green-400 flex items-center gap-1">
+                              <CheckCircle size={14} /> 正确
+                            </span>
+                          ) : (
+                            <span className="text-red-400 flex items-center gap-1">
+                              <XCircle size={14} /> 误判
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-slate-600 flex items-center gap-1">
+                            <AlertCircle size={14} /> 漏判
+                          </span>
+                        )}
+                      </div>
+                      <div className="col-span-2">
+                        {target.disposalAction ? (
+                          <StatusBadge
+                            variant={
+                              target.disposalAction === 'intercept'
+                                ? 'danger'
+                                : target.disposalAction === 'release'
+                                ? 'info'
+                                : 'warning'
+                            }
+                          >
+                            {target.disposalAction === 'warn' && '喊话警告'}
+                            {target.disposalAction === 'track' && '持续跟踪'}
+                            {target.disposalAction === 'report' && '上报指挥'}
+                            {target.disposalAction === 'intercept' && '拦截处置'}
+                            {target.disposalAction === 'release' && '放行'}
+                          </StatusBadge>
+                        ) : (
+                          <span className="text-slate-600">未处置</span>
+                        )}
+                      </div>
+                      <div className="col-span-3 text-slate-500 text-xs">
+                        <span className="text-slate-400">信号:</span>{' '}
+                        {(target.signalStrength * 100).toFixed(0)}% ·
+                        <span className="text-slate-400 ml-1">声纹:</span>{' '}
+                        {target.soundFrequency.toFixed(1)}kHz
+                      </div>
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          </div>
+
+          <div className="text-xs text-slate-500 pt-3 border-t border-slate-700/50 flex items-center justify-between">
+            <span>报告编号: {report.id}</span>
+            <span>生成时间: {new Date(report.completedAt).toLocaleString('zh-CN')}</span>
+          </div>
         </div>
       </div>
     </div>

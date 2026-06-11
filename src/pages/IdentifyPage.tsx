@@ -27,15 +27,20 @@ export default function IdentifyPage() {
   const handleIdentify = (targetId: string, type: TargetType) => {
     const target = detectedTargets.find((t) => t.id === targetId);
     if (!target) return;
+    if (target.identified) return;
+
+    const success = identifyTarget(targetId, type);
+    if (!success) return;
 
     const isCorrect = target.trueType === type;
-
-    identifyTarget(targetId, type);
     setFeedback({ targetId, correct: isCorrect });
 
     setTimeout(() => {
       setFeedback(null);
-    }, 1500);
+      const state = useGameStore.getState();
+      const refreshed = state.detectedTargets.find((t) => t.id === targetId);
+      if (refreshed) selectTarget(refreshed);
+    }, 1000);
   };
 
   const targetTypes: { type: TargetType; label: string; color: string; icon: string }[] = [

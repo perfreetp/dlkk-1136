@@ -11,7 +11,6 @@ import {
   RotateCcw,
   Home,
   ChevronRight,
-  Target as TargetIcon,
   CheckCircle,
   XCircle,
   ChevronDown,
@@ -22,13 +21,15 @@ import {
   Signal,
   Video,
   ShieldAlert,
+  List,
+  History,
 } from 'lucide-react';
 import { useGameStore, usePlayerStore } from '../store/useGameStore';
 import { TARGET_REFERENCES } from '../data/gameData';
 import { HudPanel } from '../components/common/HudPanel';
 import { GlowButton } from '../components/common/GlowButton';
 import { StatusBadge } from '../components/common/StatusBadge';
-import type { Target, TargetType } from '../types/game';
+import type { Target, TargetType, TimelineEvent } from '../types/game';
 
 const TYPE_NAMES: Record<TargetType, string> = {
   blackFlight: '黑飞无人机',
@@ -46,6 +47,8 @@ const DISPOSAL_NAMES: Record<string, string> = {
   release: '放行',
 };
 
+type ReviewTab = 'targets' | 'timeline';
+
 export default function ReviewPage() {
   const navigate = useNavigate();
   const canvasRef = useRef<HTMLCanvasElement>(null);
@@ -57,27 +60,24 @@ export default function ReviewPage() {
     detectedTargets,
     settled,
     markSettled,
+    fullResult,
   } = useGameStore();
   const { addExperience, addScore, addMissionResult } = usePlayerStore();
   const [expandedTarget, setExpandedTarget] = useState<string | null>(null);
+  const [activeTab, setActiveTab] = useState<ReviewTab>('targets');
 
   useEffect(() => {
-    if (score && currentMission && !settled) {
+    if (score && currentMission && !settled && fullResult) {
       const resultId = `result-${currentMission.id}-${Date.now()}`;
-      const added = addMissionResult({
-        id: resultId,
-        missionId: currentMission.id,
-        missionName: currentMission.name,
-        score,
-        completedAt: Date.now(),
-      });
+      const fullWithId = { ...fullResult, id: resultId };
+      const added = addMissionResult(fullWithId);
       if (added) {
         addExperience(Math.floor(score.total * 2));
         addScore(score.total);
       }
       markSettled();
     }
-  }, [score, currentMission, settled, addExperience, addScore, addMissionResult, markSettled]);
+  }, [score, currentMission, settled, fullResult, addExperience, addScore, addMissionResult, markSettled]);
 
   useEffect(() => {
     const canvas = canvasRef.current;
@@ -462,71 +462,97 @@ export default function ReviewPage() {
           </div>
         </div>
 
-        <HudPanel title={`目标处置记录 (${targetReports.length} 个目标)`} className="mb-6">
-          <div className="space-y-2">
-            <div className="grid grid-cols-12 gap-2 px-3 py-2 text-xs text-slate-400 border-b border-slate-700/50">
-              <div className="col-span-1">#</div>
-              <div className="col-span-2">真实类型</div>
-              <div className="col-span-2">玩家判读</div>
-              <div className="col-span-2">结果</div>
-              <div className="col-span-2">处置措施</div>
-              <div className="col-span-2">扣分说明</div>
-              <div className="col-span-1 text-right">操作</div>
-            </div>
+        <div className="flex gap-2 mb-4">
+          <button
+            onClick={() => setActiveTab('targets')}
+            className={`flex items-center gap-2 px-5 py-2 border transition-all ${
+              activeTab === 'targets'
+                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+            }`}
+          >
+            <List size={16} />
+            目标处置记录
+          </button>
+          <button
+            onClick={() => setActiveTab('timeline')}
+            className={`flex items-center gap-2 px-5 py-2 border transition-all ${
+              activeTab === 'timeline'
+                ? 'bg-cyan-500/20 border-cyan-400 text-cyan-300'
+                : 'bg-slate-800/50 border-slate-700 text-slate-400 hover:border-slate-500'
+            }`}
+          >
+            <History size={16} />
+            证据归档时间线
+          </button>
+        </div>
 
-            {targetReports.map(({ target, index, playerType, isCorrect, disposal, deductionReason }) => {
-              const trueRef = TARGET_REFERENCES[target.trueType];
-              const isExpanded = expandedTarget === target.id;
+        {activeTab === 'targets' && (
+          <HudPanel title={`目标处置记录 (${targetReports.length} 个目标)`} className="mb-6">
+            <div className="space-y-2">
+              <div className="grid grid-cols-12 gap-2 px-3 py-2 text-xs text-slate-400 border-b border-slate-700/50">
+                <div className="col-span-1">#</div>
+                <div className="col-span-2">真实类型</div>
+                <div className="col-span-2">玩家判读</div>
+                <div className="col-span-2">结果</div>
+                <div className="col-span-2">处置措施</div>
+                <div className="col-span-2">扣分说明</div>
+                <div className="col-span-1 text-right">操作</div>
+              </div>
 
-              return (
-                <div key={target.id} className="border border-slate-700/50 rounded-sm overflow-hidden">
-                  <div
-                    className="grid grid-cols-12 gap-2 px-3 py-3 items-center cursor-pointer hover:bg-slate-800/40 transition-colors"
-                    onClick={() => setExpandedTarget(isExpanded ? null : target.id)}
-                  >
-                    <div className="col-span-1 text-slate-400 text-sm font-mono">{String(index).padStart(2, '0')}</div>
+              {targetReports.map(({ target, index, playerType, isCorrect, disposal, deductionReason }) => {
+                const trueRef = TARGET_REFERENCES[target.trueType];
+                const isExpanded = expandedTarget === target.id;
 
-                    <div className="col-span-2">
-                      <span className="text-sm font-bold" style={{ color: trueRef?.color }}>
-                        {trueRef?.name || '未知'}
-                      </span>
-                    </div>
+                return (
+                  <div key={target.id} className="border border-slate-700/50 rounded-sm overflow-hidden">
+                    <div
+                      className="grid grid-cols-12 gap-2 px-3 py-3 items-center cursor-pointer hover:bg-slate-800/40 transition-colors"
+                      onClick={() => setExpandedTarget(isExpanded ? null : target.id)}
+                    >
+                      <div className="col-span-1 text-slate-400 text-sm font-mono">{String(index).padStart(2, '0')}</div>
 
-                    <div className="col-span-2">
-                      {playerType ? (
-                        <span
-                          className="text-sm"
-                          style={{ color: TARGET_REFERENCES[playerType]?.color || '#888' }}
-                        >
-                          {TYPE_NAMES[playerType]}
+                      <div className="col-span-2">
+                        <span className="text-sm font-bold" style={{ color: trueRef?.color }}>
+                          {trueRef?.name || '未知'}
                         </span>
-                      ) : (
-                        <span className="text-sm text-slate-600">— 未判读 —</span>
-                      )}
-                    </div>
+                      </div>
 
-                    <div className="col-span-2">
-                      {playerType ? (
-                        isCorrect ? (
-                          <span className="inline-flex items-center gap-1 text-green-400 text-sm">
-                            <CheckCircle size={14} />
-                            正确
+                      <div className="col-span-2">
+                        {playerType ? (
+                          <span
+                            className="text-sm"
+                            style={{ color: TARGET_REFERENCES[playerType]?.color || '#888' }}
+                          >
+                            {TYPE_NAMES[playerType]}
                           </span>
                         ) : (
-                          <span className="inline-flex items-center gap-1 text-red-400 text-sm">
-                            <XCircle size={14} />
-                            误判
-                          </span>
-                        )
-                      ) : (
-                        <span className="text-slate-600 text-sm flex items-center gap-1">
-                          <ShieldAlert size={14} />
-                          漏判
-                        </span>
-                      )}
-                    </div>
+                          <span className="text-sm text-slate-600">— 未判读 —</span>
+                        )}
+                      </div>
 
-                    <div className="col-span-2">
+                      <div className="col-span-2">
+                        {playerType ? (
+                          isCorrect ? (
+                            <span className="inline-flex items-center gap-1 text-green-400 text-sm">
+                              <CheckCircle size={14} />
+                              正确
+                            </span>
+                          ) : (
+                            <span className="inline-flex items-center gap-1 text-red-400 text-sm">
+                              <XCircle size={14} />
+                              误判
+                            </span>
+                          )
+                        ) : (
+                          <span className="text-slate-600 text-sm flex items-center gap-1">
+                            <ShieldAlert size={14} />
+                            漏判
+                          </span>
+                        )}
+                      </div>
+
+                      <div className="col-span-2">
                       {disposal ? (
                         <StatusBadge variant={disposal === 'intercept' ? 'danger' : disposal === 'release' ? 'info' : 'warning'}>
                           {DISPOSAL_NAMES[disposal] || disposal}
@@ -582,6 +608,106 @@ export default function ReviewPage() {
             </div>
           </div>
         </HudPanel>
+        )}
+
+        {activeTab === 'timeline' && fullResult && (
+          <HudPanel
+            title={`证据归档时间线 (${fullResult.events.length} 个事件)`}
+            className="mb-6"
+          >
+            <div className="relative">
+              <div className="absolute left-6 top-0 bottom-0 w-0.5 bg-slate-700/50" />
+
+              <div className="space-y-4">
+                {fullResult.events.map((event: TimelineEvent, index: number) => {
+                  const isCorrect = event.correct;
+                  const target = fullResult.targets.find((t) => t.id === event.targetId);
+                  const eventTime = new Date(event.timestamp);
+                  const timeStr = `${String(eventTime.getHours()).padStart(2, '0')}:${String(eventTime.getMinutes()).padStart(2, '0')}:${String(eventTime.getSeconds()).padStart(2, '0')}.${String(eventTime.getMilliseconds()).padStart(3, '0')}`;
+
+                  let icon;
+                  let color;
+                  let title;
+
+                  switch (event.type) {
+                    case 'detection':
+                      icon = <Radio size={16} />;
+                      color = 'text-cyan-400 border-cyan-500/30 bg-cyan-500/10';
+                      title = `目标发现：${target ? `${TYPE_NAMES[target.trueType]} (${event.targetId.slice(-4)})` : event.targetId.slice(-4)}`;
+                      break;
+                    case 'identification':
+                      icon = isCorrect ? <CheckCircle size={16} /> : <XCircle size={16} />;
+                      color = isCorrect
+                        ? 'text-green-400 border-green-500/30 bg-green-500/10'
+                        : 'text-red-400 border-red-500/30 bg-red-500/10';
+                      const playerType = event.playerType as TargetType;
+                      const trueType = target?.trueType;
+                      title = `判读${isCorrect ? '正确' : '错误'}：识别为「${TYPE_NAMES[playerType]}」${!isCorrect && trueType ? `，真实为「${TYPE_NAMES[trueType]}」` : ''}`;
+                      break;
+                    case 'disposal':
+                      icon = <ShieldAlert size={16} />;
+                      color = 'text-purple-400 border-purple-500/30 bg-purple-500/10';
+                      const disposalAction = event.disposalAction;
+                      title = `处置完成：${disposalAction ? DISPOSAL_NAMES[disposalAction] : '未采取措施'}`;
+                      break;
+                    default:
+                      icon = <Zap size={16} />;
+                      color = 'text-yellow-400 border-yellow-500/30 bg-yellow-500/10';
+                      title = event.type;
+                  }
+
+                  return (
+                    <div key={`${event.timestamp}-${index}`} className="relative pl-14">
+                      <div className={`absolute left-4 w-4 h-4 rounded-full border-2 ${color} flex items-center justify-center`}>
+                        <div className="w-2 h-2 rounded-full bg-current opacity-50" />
+                      </div>
+
+                      <div className={`border p-3 ${color}`}>
+                        <div className="flex items-center justify-between mb-2">
+                          <div className="flex items-center gap-2">
+                            {icon}
+                            <span className="font-bold text-sm">{title}</span>
+                          </div>
+                          <span className="text-xs text-slate-500 font-mono">{timeStr}</span>
+                        </div>
+
+                        {target && (
+                          <div className="mt-3 pt-3 border-t border-slate-700/50 grid grid-cols-4 gap-3 text-xs">
+                            <div className="bg-slate-800/50 p-2 border border-slate-700/50">
+                              <div className="text-cyan-400 mb-1 flex items-center gap-1">
+                                <Radio size={12} /> 雷达特征
+                              </div>
+                              <div className="text-slate-300">{target.radarSignature}</div>
+                            </div>
+                            <div className="bg-slate-800/50 p-2 border border-slate-700/50">
+                              <div className="text-green-400 mb-1 flex items-center gap-1">
+                                <Zap size={12} /> 声纹特征
+                              </div>
+                              <div className="text-slate-300">{target.soundPattern}</div>
+                              <div className="text-slate-500 mt-1">{target.soundFrequency.toFixed(1)} kHz</div>
+                            </div>
+                            <div className="bg-slate-800/50 p-2 border border-slate-700/50">
+                              <div className="text-yellow-400 mb-1 flex items-center gap-1">
+                                <Signal size={12} /> 信号强度
+                              </div>
+                              <div className="text-slate-300">{(target.signalStrength * 100).toFixed(0)}%</div>
+                            </div>
+                            <div className="bg-slate-800/50 p-2 border border-slate-700/50">
+                              <div className="text-purple-400 mb-1 flex items-center gap-1">
+                                <Video size={12} /> 视频描述
+                              </div>
+                              <div className="text-slate-300">{target.videoDescription}</div>
+                            </div>
+                          </div>
+                        )}
+                      </div>
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </HudPanel>
+        )}
 
         <div className="fixed bottom-0 left-0 right-0 bg-slate-950/95 backdrop-blur-sm border-t border-slate-700/50 z-20">
           <div className="max-w-6xl mx-auto px-4 py-4 flex items-center justify-between">
