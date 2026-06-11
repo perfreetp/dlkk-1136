@@ -26,12 +26,13 @@ interface GameStore {
   elapsedTime: number;
   score: Score | null;
   isPaused: boolean;
+  settled: boolean;
 
   setPhase: (phase: GamePhase) => void;
   startMission: (mission: Mission) => void;
   addTarget: (target: Target) => void;
   selectTarget: (target: Target | null) => void;
-  identifyTarget: (targetId: string, type: TargetType) => void;
+  identifyTarget: (targetId: string, type: TargetType) => boolean;
   addFence: (fence: Fence) => void;
   updateFence: (fenceId: string, updates: Partial<Fence>) => void;
   updateFenceVertex: (fenceId: string, vertexIndex: number, x: number, y: number) => void;
@@ -46,6 +47,7 @@ interface GameStore {
   updateElapsedTime: (time: number) => void;
   resetGame: () => void;
   updateTargetPosition: (targetId: string, x: number, y: number) => void;
+  markSettled: () => void;
 }
 
 export const useGameStore = create<GameStore>((set, get) => ({
@@ -60,6 +62,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
   elapsedTime: 0,
   score: null,
   isPaused: false,
+  settled: false,
 
   setPhase: (phase) => set({ currentPhase: phase }),
 
@@ -75,6 +78,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       startTime: Date.now(),
       elapsedTime: 0,
       score: null,
+      settled: false,
     }),
 
   addTarget: (target) =>
@@ -84,37 +88,41 @@ export const useGameStore = create<GameStore>((set, get) => ({
 
   selectTarget: (target) => set({ selectedTarget: target }),
 
-  identifyTarget: (targetId, type) =>
-    set((state) => {
-      const target = state.detectedTargets.find((t) => t.id === targetId);
-      if (!target) return state;
+  identifyTarget: (targetId, type) => {
+    const state = get();
+    const target = state.detectedTargets.find((t) => t.id === targetId);
+    if (!target) return false;
+    if (target.identified) return false;
 
-      const isCorrect = target.trueType === type;
+    const isCorrect = target.trueType === type;
 
-      const typeNames: Record<TargetType, string> = {
-        blackFlight: '黑飞无人机',
-        bird: '鸟群',
-        legitimate: '合法航线',
-        noise: '设备噪声',
-        unknown: '未知',
-      };
+    const typeNames: Record<TargetType, string> = {
+      blackFlight: '黑飞无人机',
+      bird: '鸟群',
+      legitimate: '合法航线',
+      noise: '设备噪声',
+      unknown: '未知',
+    };
 
-      const event: GameEvent = {
-        id: `event-${Date.now()}-${Math.random()}`,
-        timestamp: Date.now(),
-        type: 'identification',
-        description: `目标识别为 ${typeNames[type]}${isCorrect ? ' ✓' : ' ✗'}`,
-        targetId,
-        result: isCorrect ? 'correct' : 'wrong',
-      };
+    const event: GameEvent = {
+      id: `event-${Date.now()}-${Math.random()}`,
+      timestamp: Date.now(),
+      type: 'identification',
+      description: `目标识别为 ${typeNames[type]}${isCorrect ? ' ✓' : ' ✗'}`,
+      targetId,
+      result: isCorrect ? 'correct' : 'wrong',
+      playerType: type,
+      trueType: target.trueType,
+    };
 
-      return {
-        detectedTargets: state.detectedTargets.map((t) =>
-          t.id === targetId ? { ...t, identified: true, type } : t
-        ),
-        events: [...state.events, event],
-      };
-    }),
+    set({
+      detectedTargets: state.detectedTargets.map((t) =>
+        t.id === targetId ? { ...t, identified: true, type } : t
+      ),
+      events: [...state.events, event],
+    });
+    return true;
+  },
 
   addFence: (fence) =>
     set((state) => ({
@@ -193,6 +201,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
         type: 'disposal',
         description: `对目标执行 ${actionNames[action] || action}`,
         targetId,
+        disposalAction: action,
       };
 
       return {
@@ -217,19 +226,21 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const mission = state.currentMission;
     if (!mission) return;
 
-    const identifiedTargets = state.detectedTargets.filter((t) => t.identified);
-    const correctIdentifications = state.events.filter(
-      (e) => e.type === 'identification' && e.result === 'correct'
+    const identificationEvents = state.events.filter((e) => e.type === 'identification');
+    const uniqueTargetIds = new Set(identificationEvents.map((e) => e.targetId));
+    const correctIds = new Set(
+      identificationEvents.filter((e) => e.result === 'correct').map((e) => e.targetId)
     );
-    const wrongIdentifications = state.events.filter(
-      (e) => e.type === 'identification' && e.result === 'wrong'
+    const wrongIds = new Set(
+      identificationEvents.filter((e) => e.result === 'wrong').map((e) => e.targetId)
     );
+
+    const correctCount = correctIds.size;
+    const wrongCount = wrongIds.size;
+    const totalIdentified = uniqueTargetIds.size;
 
     const blackFlightTargets = state.detectedTargets.filter((t) => t.trueType === 'blackFlight');
-    const falseAlarms = wrongIdentifications.length;
-
-    const totalIdentifications = identifiedTargets.length;
-    const falseAlarmRate = totalIdentifications > 0 ? falseAlarms / totalIdentifications : 0;
+    const falseAlarmRate = totalIdentified > 0 ? wrongCount / totalIdentified : 0;
 
     const avgResponseTime = state.events.filter((e) => e.type === 'detection').length > 0
       ? 30
@@ -241,7 +252,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
     const publicImpact = 1 - (interceptedBlack / Math.max(blackFlightTargets.length, 1)) * 0.8;
 
     const evidenceCompleteness = Math.min(
-      correctIdentifications.length / Math.max(state.detectedTargets.length, 1),
+      correctCount / Math.max(state.detectedTargets.length, 1),
       1
     );
 
@@ -287,6 +298,7 @@ export const useGameStore = create<GameStore>((set, get) => ({
       startTime: 0,
       elapsedTime: 0,
       score: null,
+      settled: false,
     }),
 
   updateTargetPosition: (targetId, x, y) =>
@@ -295,6 +307,8 @@ export const useGameStore = create<GameStore>((set, get) => ({
         t.id === targetId ? { ...t, x, y } : t
       ),
     })),
+
+  markSettled: () => set({ settled: true }),
 }));
 
 interface PlayerStore extends PlayerState {
@@ -304,7 +318,7 @@ interface PlayerStore extends PlayerState {
   unlockSensor: (sensorId: string, cost: number) => boolean;
   unlockFeature: (featureId: string, cost: number) => boolean;
   unlockAchievement: (achievementId: string) => void;
-  addMissionResult: (result: MissionResult) => void;
+  addMissionResult: (result: MissionResult) => boolean;
   resetPlayer: () => void;
 }
 
@@ -376,13 +390,21 @@ export const usePlayerStore = create<PlayerStore>()(
 
       unlockAchievement: (achievementId) =>
         set((state) => ({
-          achievements: [...state.achievements, achievementId],
+          achievements: state.achievements.includes(achievementId)
+            ? state.achievements
+            : [...state.achievements, achievementId],
         })),
 
-      addMissionResult: (result) =>
+      addMissionResult: (result) => {
+        const state = get();
+        if (state.missionHistory.some((r) => r.id === result.id)) {
+          return false;
+        }
         set((state) => ({
           missionHistory: [...state.missionHistory, result],
-        })),
+        }));
+        return true;
+      },
 
       resetPlayer: () => set(initialPlayerState),
     }),

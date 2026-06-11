@@ -69,6 +69,9 @@ export interface GameEvent {
   description: string;
   targetId?: string;
   result?: 'correct' | 'wrong';
+  playerType?: TargetType;
+  trueType?: TargetType;
+  disposalAction?: string;
 }
 
 export interface Score {

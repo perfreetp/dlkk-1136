@@ -14,14 +14,35 @@ import {
   Check,
   ChevronRight,
   AlertCircle,
+  Route,
+  CircleDot,
 } from 'lucide-react';
-import { usePlayerStore } from '../store/useGameStore';
+import { usePlayerStore, MISSIONS } from '../store/useGameStore';
 import { SENSORS, ACHIEVEMENTS } from '../data/gameData';
 import { HudPanel } from '../components/common/HudPanel';
 import { GlowButton } from '../components/common/GlowButton';
 import { StatusBadge } from '../components/common/StatusBadge';
+import type { Mission } from '../types/game';
 
-type TabType = 'sensors' | 'achievements' | 'features';
+type TabType = 'sensors' | 'achievements' | 'features' | 'training';
+
+interface TrainingNode {
+  id: string;
+  missionId: string;
+  label: string;
+  description: string;
+  reward: number;
+}
+
+interface TrainingLine {
+  id: string;
+  featureId: string;
+  title: string;
+  subtitle: string;
+  color: string;
+  icon: React.ReactNode;
+  nodes: TrainingNode[];
+}
 
 export default function GrowthPage() {
   const navigate = useNavigate();
@@ -113,7 +134,71 @@ export default function GrowthPage() {
   const tabs: { id: TabType; label: string; icon: React.ReactNode }[] = [
     { id: 'sensors', label: '传感器', icon: <Cpu size={16} /> },
     { id: 'features', label: '能力解锁', icon: <Zap size={16} /> },
+    { id: 'training', label: '训练路线', icon: <Route size={16} /> },
     { id: 'achievements', label: '成就', icon: <Trophy size={16} /> },
+  ];
+
+  const trainingLines: TrainingLine[] = [
+    {
+      id: 'basic',
+      featureId: 'basic',
+      title: '基础值守训练',
+      subtitle: '新手入门，所有值守员必做',
+      color: '#00d4ff',
+      icon: <Cpu size={22} />,
+      nodes: MISSIONS.filter((m) => !m.requiredFeature).map((m) => ({
+        id: m.id,
+        missionId: m.id,
+        label: m.name,
+        description: m.description,
+        reward: m.reward,
+      })),
+    },
+    {
+      id: 'night',
+      featureId: 'night-mode',
+      title: '夜间值守训练',
+      subtitle: '解锁「夜间模式」后开放',
+      color: '#a78bfa',
+      icon: <Moon size={22} />,
+      nodes: MISSIONS.filter((m) => m.requiredFeature === 'night-mode').map((m) => ({
+        id: m.id,
+        missionId: m.id,
+        label: m.name,
+        description: m.description,
+        reward: m.reward,
+      })),
+    },
+    {
+      id: 'weather',
+      featureId: 'bad-weather',
+      title: '恶劣天气训练',
+      subtitle: '解锁「恶劣天气」后开放',
+      color: '#60a5fa',
+      icon: <Cloud size={22} />,
+      nodes: MISSIONS.filter((m) => m.requiredFeature === 'bad-weather').map((m) => ({
+        id: m.id,
+        missionId: m.id,
+        label: m.name,
+        description: m.description,
+        reward: m.reward,
+      })),
+    },
+    {
+      id: 'multi',
+      featureId: 'multi-target-track',
+      title: '多目标协同训练',
+      subtitle: '解锁「多目标追踪」后开放',
+      color: '#f472b6',
+      icon: <Target size={22} />,
+      nodes: MISSIONS.filter((m) => m.requiredFeature === 'multi-target-track').map((m) => ({
+        id: m.id,
+        missionId: m.id,
+        label: m.name,
+        description: m.description,
+        reward: m.reward,
+      })),
+    },
   ];
 
   return (
@@ -362,6 +447,162 @@ export default function GrowthPage() {
                             )}
                           </GlowButton>
                         )}
+                      </div>
+                    );
+                  })}
+                </div>
+              </HudPanel>
+            )}
+
+            {activeTab === 'training' && (
+              <HudPanel title="任务训练路线">
+                <div className="space-y-6">
+                  {trainingLines.map((line) => {
+                    const isLineUnlocked = line.featureId === 'basic' || unlockedFeatures.includes(line.featureId);
+                    const completedMissionIds = missionHistory.map((h) => h.missionId);
+                    const completedNodes = line.nodes.filter((n) => completedMissionIds.includes(n.missionId));
+                    const progress = line.nodes.length > 0 ? Math.round((completedNodes.length / line.nodes.length) * 100) : 0;
+
+                    return (
+                      <div
+                        key={line.id}
+                        className={`border rounded-sm p-4 transition-all ${
+                          isLineUnlocked
+                            ? 'bg-slate-800/40'
+                            : 'bg-slate-900/60 opacity-60'
+                        }`}
+                        style={{ borderColor: isLineUnlocked ? line.color + '60' : 'rgba(51,65,85,0.5)' }}
+                      >
+                        <div className="flex items-start justify-between mb-4">
+                          <div className="flex items-center gap-3">
+                            <div
+                              className="w-12 h-12 rounded-sm flex items-center justify-center"
+                              style={{
+                                backgroundColor: isLineUnlocked ? line.color + '20' : 'rgba(51,65,85,0.5)',
+                                color: isLineUnlocked ? line.color : '#64748b',
+                              }}
+                            >
+                              {isLineUnlocked ? line.icon : <Lock size={20} />}
+                            </div>
+                            <div>
+                              <div className="flex items-center gap-2">
+                                <h4 className="font-bold text-white">{line.title}</h4>
+                                {!isLineUnlocked && (
+                                  <StatusBadge variant="warning">
+                                    <Lock size={10} className="mr-1" />
+                                    未解锁
+                                  </StatusBadge>
+                                )}
+                                {isLineUnlocked && progress === 100 && (
+                                  <StatusBadge variant="success">
+                                    <Check size={10} className="mr-1" />
+                                    全部完成
+                                  </StatusBadge>
+                                )}
+                              </div>
+                              <div className="text-xs text-slate-400 mt-0.5">{line.subtitle}</div>
+                              {isLineUnlocked && (
+                                <div className="text-xs mt-1" style={{ color: line.color }}>
+                                  进度: {completedNodes.length} / {line.nodes.length} · {progress}%
+                                </div>
+                              )}
+                            </div>
+                          </div>
+                          {isLineUnlocked && (
+                            <div className="w-32 h-2 bg-slate-700 rounded-full overflow-hidden">
+                              <div
+                                className="h-full transition-all duration-500"
+                                style={{ width: `${progress}%`, backgroundColor: line.color }}
+                              />
+                            </div>
+                          )}
+                        </div>
+
+                        <div className="relative ml-6">
+                          {line.nodes.length > 1 && (
+                            <div
+                              className="absolute left-[18px] top-6 bottom-6 w-0.5"
+                              style={{
+                                backgroundColor: isLineUnlocked ? line.color + '30' : 'rgba(71,85,105,0.3)',
+                              }}
+                            />
+                          )}
+                          <div className="space-y-3">
+                            {line.nodes.map((node, idx) => {
+                              const history = missionHistory.find((h) => h.missionId === node.missionId);
+                              const isCompleted = !!history;
+
+                              return (
+                                <div
+                                  key={node.id}
+                                  className={`relative flex items-start gap-4 pl-4 ${
+                                    isLineUnlocked && idx < line.nodes.length - 1 ? 'pb-1' : ''
+                                  }`}
+                                >
+                                  <div
+                                    className="absolute left-[-18px] top-1 w-9 h-9 rounded-full flex items-center justify-center border-2 z-10"
+                                    style={{
+                                      backgroundColor: isCompleted
+                                        ? line.color + '20'
+                                        : isLineUnlocked
+                                        ? '#1e293b'
+                                        : '#0f172a',
+                                      borderColor: isCompleted
+                                        ? line.color
+                                        : isLineUnlocked
+                                        ? line.color + '50'
+                                        : 'rgba(71,85,105,0.4)',
+                                    }}
+                                  >
+                                    {isCompleted ? (
+                                      <Check size={14} style={{ color: line.color }} />
+                                    ) : isLineUnlocked ? (
+                                      <CircleDot size={14} style={{ color: line.color + '80' }} />
+                                    ) : (
+                                      <Lock size={12} className="text-slate-600" />
+                                    )}
+                                  </div>
+
+                                  <div className="flex-1">
+                                    <div className="flex items-center justify-between">
+                                      <span
+                                        className={`text-sm font-bold ${
+                                          isLineUnlocked ? 'text-white' : 'text-slate-600'
+                                        }`}
+                                      >
+                                        节点 {idx + 1}: {node.label}
+                                      </span>
+                                      {isCompleted && history && (
+                                        <span
+                                          className="text-xs font-bold"
+                                          style={{ color: line.color }}
+                                        >
+                                          {history.score.total}分 · {history.score.grade}
+                                        </span>
+                                      )}
+                                      {!isCompleted && isLineUnlocked && (
+                                        <span className="flex items-center gap-1 text-xs text-yellow-400">
+                                          <Star size={10} className="fill-yellow-400" />
+                                          {node.reward}
+                                        </span>
+                                      )}
+                                    </div>
+                                    {isLineUnlocked && (
+                                      <div className="text-xs text-slate-500 mt-0.5">
+                                        {node.description}
+                                      </div>
+                                    )}
+                                    {isCompleted && history && (
+                                      <div className="text-xs text-slate-500 mt-0.5">
+                                        完成时间: {new Date(history.completedAt).toLocaleString('zh-CN')}
+                                      </div>
+                                    )}
+                                  </div>
+                                </div>
+                              );
+                            })}
+                          </div>
+                        </div>
                       </div>
                     );
                   })}
